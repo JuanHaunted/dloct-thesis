@@ -1,0 +1,3 @@
+# Model A: single-shot ConvNeXt U-Net, full phase-aware loss. DC applied at inference.
+defaults: base.yaml
+name: unet_full
