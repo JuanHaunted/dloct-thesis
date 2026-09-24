@@ -74,3 +74,20 @@ def test_models_start_at_measurement_and_shapes(cls, kw):
     assert out.shape == y.shape and out.dtype == torch.complex64
     assert torch.allclose(out, y, atol=1e-6)  # zero-initialized head => identity at init
     model(y, 4, 2).abs().mean().backward()
+
+
+def test_bulk_phase_removal_is_independent_of_aline_jitter():
+    # The correction removes any phase common to a whole A-line (jitter, bulk motion, and the
+    # field's own depth-averaged step), so the result must not depend on the jitter.
+    from dloct.prepare_data import remove_bulk_phase
+    rng = np.random.default_rng(0)
+    x = (rng.standard_normal((2, 64, 128)) + 1j * rng.standard_normal((2, 64, 128))).astype(np.complex64)
+    jitter = np.exp(1j * rng.uniform(-np.pi, np.pi, (2, 1, 128))).astype(np.complex64)
+    clean, jittered = remove_bulk_phase(x.copy()), remove_bulk_phase(x * jitter)
+    for y in range(2):   # equal up to one global phase per B-scan
+        g = np.vdot(clean[y], jittered[y])
+        assert np.allclose(jittered[y], clean[y] * g / abs(g), atol=1e-4)
+    # Depth-dependent (local) phase structure survives: a phase ramp along z is untouched.
+    ramp = np.exp(1j * 0.3 * np.arange(64))[None, :, None].astype(np.complex64)
+    g = np.vdot(clean[0] * ramp[0], remove_bulk_phase(x * ramp)[0])
+    assert np.allclose(remove_bulk_phase(x * ramp)[0], clean[0] * ramp[0] * g / abs(g), atol=1e-4)

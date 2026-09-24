@@ -69,13 +69,14 @@ uv run python -m dloct.eval --run runs/unet_full
 
 No real data at hand? `uv run python scripts/make_fake_data.py` writes small synthetic volumes.
 
-### Cluster (SLURM)
+### Cluster (EAFIT Apolo, SLURM)
+
+Full walkthrough: [`docs/apolo.md`](docs/apolo.md). In short, on the login node (VPN on):
 
 ```bash
-bash scripts/setup_cluster.sh                    # once, on a login node
-# edit the #SBATCH partition/account lines in scripts/*.slurm
-export DLOCT_DATA=/scratch/$USER/dloct/prepared
-sbatch scripts/prepare.slurm /path/to/raw/train $DLOCT_DATA      # once
+bash scripts/setup_cluster.sh                    # once: uv if online, else ./wheelhouse offline
+export DLOCT_DATA=$HOME/dloct/prepared
+sbatch scripts/prepare.slurm $HOME/dloct/raw $DLOCT_DATA          # once
 sbatch scripts/train.slurm configs/unet_full.yaml
 sbatch scripts/train.slurm configs/cascade_full.yaml
 sbatch scripts/eval.slurm runs/unet_full

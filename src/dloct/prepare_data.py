@@ -4,12 +4,15 @@ Convert raw tomograms to the training format read by ``dloct.data``.
 For every ``*.npy`` under ``--src`` (recursively):
   * interpret it as ``(Z, X, Y)`` complex or ``(Z, X, Y, 2)`` Re/Im (axis order set by
     ``--layout``),
+  * for sources listed in ``--bulk-phase`` (default: ``phase``, the real acquisitions), remove
+    the bulk phase between adjacent A-lines (see ``remove_bulk_phase``),
   * write ``<out>/<name>.npy`` as contiguous complex64 ``(Y, Z, X)`` (B-scan major),
-  * record the normalization scale (99.9th percentile amplitude) in ``<out>/meta.json``.
+  * record the normalization scale (99.9th percentile amplitude) and lateral-coherence
+    diagnostics in ``<out>/meta.json``.
 
 Then it assigns splits **by sample**, never by B-scan: polarization channels of the same
-acquisition (``polInt1_polOut2_foo`` and ``polInt2_polOut1_foo``) share a group and always
-land in the same split. If a source directory holds fewer than three groups, the split
+acquisition (``polInt1_polOut2_foo`` and ``polInt2_polOut1_foo``, or the ``A``/``B`` channels
+``Fovea1A`` and ``Fovea1B``) share a group and always land in the same split. If a source directory holds fewer than three groups, the split
 falls back to disjoint B-scan ranges with gaps (weaker; fine for local smoke tests).
 
 Usage:
@@ -24,10 +27,51 @@ from pathlib import Path
 import numpy as np
 
 _POL = re.compile(r"polInt\d+_polOut\d+_?", re.IGNORECASE)
+_CHANNEL = re.compile(r"(?<=[0-9a-z])[AB]$")
 
 
 def group_of(source: str, stem: str) -> str:
-    return f"{source}/{_POL.sub('', stem) or stem}"
+    base = _CHANNEL.sub("", _POL.sub("", stem)) or stem
+    return f"{source}/{base}"
+
+
+def remove_bulk_phase(vol: np.ndarray) -> np.ndarray:
+    """
+    Remove the random bulk phase between adjacent A-lines of each B-scan, in place.
+
+    Real acquisitions carry a per-A-line phase offset (sample motion, trigger jitter) that is
+    unpredictable from neighbouring A-lines and irrelevant for functional imaging: Doppler/OCE
+    remove it too. The step between A-lines x and x+1 is the phase of Σ_z T(z,x+1)·T*(z,x)
+    (intensity-weighted, so dominated by tissue); its cumulative sum along x is removed.
+    ``vol`` is (Y, Z, X).
+    """
+    for y in range(vol.shape[0]):
+        b = vol[y]
+        step = np.angle((b[:, 1:] * b[:, :-1].conj()).sum(axis=0))
+        phi = np.concatenate([[0.0], np.cumsum(step)])
+        vol[y] = b * np.exp(-1j * phi)[None, :].astype(np.complex64)
+    return vol
+
+
+def lateral_diagnostics(vol: np.ndarray, n_bscans: int = 16) -> dict:
+    """
+    Complex correlation between A-lines ``lag`` apart (tissue: top 30 % amplitude) and the
+    fraction of lateral spectral energy inside the band a K-fold decimation keeps. Low
+    correlation at lag K means the missing A-lines are barely predictable from the measured ones.
+    """
+    b = vol[np.linspace(0, vol.shape[0] - 1, min(n_bscans, vol.shape[0])).astype(int)]
+    thr = np.percentile(np.abs(b), 70)
+    out = {}
+    for lag in (1, 2, 4):
+        p, q = b[..., lag:], b[..., :-lag]
+        m = (np.abs(p) > thr) & (np.abs(q) > thr)
+        num = np.abs((p * q.conj())[m].sum())
+        out[f"rho_lag{lag}"] = float(num / np.sqrt((np.abs(p[m]) ** 2).sum() * (np.abs(q[m]) ** 2).sum()))
+    s = (np.abs(np.fft.fft(b, axis=-1)) ** 2).mean(axis=(0, 1))
+    f = np.fft.fftfreq(b.shape[-1])
+    for k in (2, 4):
+        out[f"inband_energy_K{k}"] = float(s[np.abs(f) < 0.5 / k].sum() / s.sum())
+    return out
 
 
 def load_complex(path: Path, layout: str) -> np.ndarray:
@@ -84,6 +128,8 @@ def main():
     p.add_argument("--src", default="data/train")
     p.add_argument("--out", default="data/prepared")
     p.add_argument("--layout", default="ZXY", help="axis order of the raw volume (default ZXY)")
+    p.add_argument("--bulk-phase", nargs="*", default=["phase"], metavar="SOURCE",
+                   help="sources (subdirectories) to bulk-phase correct; default: phase")
     p.add_argument("--overwrite", action="store_true")
     args = p.parse_args()
 
@@ -102,11 +148,19 @@ def main():
             print(f"skip {name} (exists)")
             continue
         vol = load_complex(path, args.layout)
+        diag = {"raw": lateral_diagnostics(vol)}
+        corrected = source in args.bulk_phase
+        if corrected:
+            remove_bulk_phase(vol)
+            diag["bulk_corrected"] = lateral_diagnostics(vol)
         scale = amplitude_scale(vol)
         np.save(out / f"{name}.npy", vol)
         volumes[name] = dict(source=source, group=group_of(source, path.stem), file=str(path),
-                             shape=list(vol.shape), scale=scale)
+                             shape=list(vol.shape), scale=scale, bulk_phase_corrected=corrected,
+                             diagnostics=diag)
         print(f"{name}: (Y,Z,X)={vol.shape} scale={scale:.4g} group={volumes[name]['group']}")
+        for tag, d in diag.items():
+            print(f"    {tag:15s} " + " ".join(f"{k}={v:.3f}" for k, v in d.items()))
         del vol
 
     meta = dict(volumes=volumes, splits=assign_splits(volumes), layout="YZX complex64")

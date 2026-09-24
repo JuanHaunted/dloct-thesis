@@ -9,11 +9,20 @@ from .metrics import compute_metrics
 from .physics import data_consistency, measure
 
 
+def amp_dtype(precision: str = "auto"):
+    """Autocast dtype for a precision setting; None means full fp32."""
+    if precision == "fp32" or not torch.cuda.is_available():
+        return None
+    if precision == "auto":
+        return torch.bfloat16 if torch.cuda.is_bf16_supported(including_emulation=False) else torch.float16
+    return {"bf16": torch.bfloat16, "fp16": torch.float16}[precision]
+
+
 @torch.no_grad()
-def reconstruct(model, x, factor, offset=0, bf16=True):
+def reconstruct(model, x, factor, offset=0, amp_dtype=None):
     """Returns {method: complex (B, Z, X)} for a clean complex batch ``x``."""
     x_meas = measure(x, factor, offset)
-    with torch.autocast("cuda", dtype=torch.bfloat16, enabled=bf16 and x.is_cuda):
+    with torch.autocast("cuda", dtype=amp_dtype or torch.float32, enabled=amp_dtype is not None and x.is_cuda):
         x_hat = model(x_meas, factor, offset, apply_dc=False)
     out = {"interpolation": x_meas, "model": x_hat.to(torch.complex64)}
     if not getattr(model, "dc_builtin", False):
@@ -28,7 +37,7 @@ def lateral_mps(z: torch.Tensor):
 
 
 @torch.no_grad()
-def evaluate(model, dataset, factor, device, tissue_db=-30.0, bf16=True, keep=0):
+def evaluate(model, dataset, factor, device, tissue_db=-30.0, amp_dtype=None, keep=0):
     """
     Averages metrics over the B-scans of ``dataset`` (an ``EvalBScans``). Returns
     ``(summary, per_source, examples, spectra)``; ``examples`` holds the first ``keep``
@@ -41,7 +50,7 @@ def evaluate(model, dataset, factor, device, tissue_db=-30.0, bf16=True, keep=0)
     for i in range(len(dataset)):
         x, name, y = dataset[i]
         x = x.to(device)[None]
-        recon = reconstruct(model, x, factor, bf16=bf16)
+        recon = reconstruct(model, x, factor, amp_dtype=amp_dtype)
         source = dataset.vols.volume(name)["source"]
         for method, z in recon.items():
             m = compute_metrics(z, x, tissue_db)

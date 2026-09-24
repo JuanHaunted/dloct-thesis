@@ -26,6 +26,18 @@ def magnitude_l1(x_hat, x, eps: float = 1e-8):
     return (amp_hat - x.abs()).abs().mean()
 
 
+def log_magnitude(x_hat, x, floor: float = 1e-2):
+    """
+    L1 between log amplitudes, |log((|x̂| + c) / (|x| + c))|, c ≈ −40 dB of the P99.9 amplitude.
+
+    Complex losses reward the conditional mean, whose magnitude shrinks wherever phase is
+    uncertain, so unmeasured A-lines come out dark. This term penalizes that shrinkage in
+    the dB domain the amplitude is judged in.
+    """
+    amp_hat = torch.sqrt(x_hat.real ** 2 + x_hat.imag ** 2 + 1e-12)
+    return (torch.log(amp_hat + floor) - torch.log(x.abs() + floor)).abs().mean()
+
+
 def _cos_dphi(a, b):
     """cos of the phase difference between a and b, computed without atan2."""
     return (a * b.conj()).real / (a.abs() * b.abs() + _DELTA)
@@ -66,17 +78,17 @@ def lateral_spectrum_l1(x_hat, x):
 
 class ReconLoss(torch.nn.Module):
     """
-    L = w_c·L_c + w_mag·L_mag + w_phase·L_φ + w_dphase·L_Δφ + w_fft·L_F.
+    L = w_c·L_c + w_mag·L_mag + w_logmag·L_logmag + w_phase·L_φ + w_dphase·L_Δφ + w_fft·L_F.
 
     ``warmup_steps`` linearly ramps the two phase terms from 0 so they do not dominate
     before the amplitude is roughly right.
     """
 
-    def __init__(self, charbonnier=1.0, magnitude=0.0, phase=0.1, dphase=0.1, fft=0.01,
-                 eps=1e-3, warmup_steps=0):
+    def __init__(self, charbonnier=1.0, magnitude=0.0, log_magnitude=0.0, phase=0.1, dphase=0.1,
+                 fft=0.01, eps=1e-3, warmup_steps=0):
         super().__init__()
-        self.w = dict(charbonnier=charbonnier, magnitude=magnitude, phase=phase,
-                      dphase=dphase, fft=fft)
+        self.w = dict(charbonnier=charbonnier, magnitude=magnitude, log_magnitude=log_magnitude,
+                      phase=phase, dphase=dphase, fft=fft)
         self.eps = eps
         self.warmup_steps = warmup_steps
 
@@ -87,6 +99,8 @@ class ReconLoss(torch.nn.Module):
             terms["charbonnier"] = complex_charbonnier(x_hat, x, self.eps)
         if self.w["magnitude"]:
             terms["magnitude"] = magnitude_l1(x_hat, x)
+        if self.w["log_magnitude"]:
+            terms["log_magnitude"] = log_magnitude(x_hat, x)
         if self.w["phase"]:
             terms["phase"] = weighted_phase(x_hat, x)
         if self.w["dphase"]:

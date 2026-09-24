@@ -1,4 +1,5 @@
-# Ablation: single-shot U-Net, complex Charbonnier only (no explicit phase terms).
+# Ablation: single-shot U-Net without the explicit phase terms (complex Charbonnier +
+# log-amplitude only). Isolates what the phase and inter-A-line phase terms contribute.
 defaults: base.yaml
 name: unet_complex
 loss: {phase: 0.0, dphase: 0.0, fft: 0.0}

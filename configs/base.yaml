@@ -5,7 +5,9 @@ out_dir: runs
 
 data:
   root: data/prepared
-  factor: 4            # lateral decimation K; phantom analysis gives K* ~ 2.1, so K=4 is aliased
+  sources: [phase]     # real acquisitions only; null = every source in meta.json
+  factor: 2            # lateral decimation K. Real tomograms are near Nyquist (K* ~ 1), so K=2
+                       # already aliases; K=4 is the harder follow-up (see meta.json diagnostics)
   patch: [256, 256]    # (Z, X) training crop
   batch_size: 8        # per GPU
   num_workers: 8
@@ -22,6 +24,7 @@ model:
 loss:
   charbonnier: 1.0
   magnitude: 0.0
+  log_magnitude: 0.1   # counters amplitude shrinkage on unmeasured A-lines (see losses.log_magnitude)
   phase: 0.1
   dphase: 0.1
   fft: 0.01
@@ -36,7 +39,7 @@ optim:
   ema: 0.999
 
 train:
-  bf16: true
+  precision: auto     # auto | bf16 | fp16 | fp32  (auto: bf16 if supported, else fp16, e.g. V100)
   compile: false
   log_every: 50
   val_every: 2500

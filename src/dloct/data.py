@@ -39,9 +39,10 @@ class PreparedVolumes:
     def volume(self, name: str) -> dict:
         return self.meta["volumes"][name]
 
-    def ranges(self, split: str) -> list[tuple[str, int, int]]:
-        """(volume, y_start, y_end) B-scan ranges belonging to ``split``."""
-        return [tuple(r) for r in self.meta["splits"][split]]
+    def ranges(self, split: str, sources=None) -> list[tuple[str, int, int]]:
+        """(volume, y_start, y_end) B-scan ranges of ``split``, optionally only from ``sources``."""
+        return [tuple(r) for r in self.meta["splits"][split]
+                if sources is None or self.volume(r[0])["source"] in sources]
 
 
 def _crop_to_multiple(n: int, m: int) -> int:
@@ -60,9 +61,9 @@ class TrainPatches(Dataset):
     """
 
     def __init__(self, root, patch=(256, 256), length=10 ** 7, seed=0, rank=0,
-                 min_energy=1e-3, tries=8, divisor=16):
+                 min_energy=1e-3, tries=8, divisor=16, sources=None):
         self.vols = PreparedVolumes(root)
-        self.ranges = self.vols.ranges("train")
+        self.ranges = self.vols.ranges("train", sources)
         if not self.ranges:
             raise ValueError("empty train split")
         sizes = np.array([e - s for _, s, e in self.ranges], dtype=np.float64)
@@ -111,10 +112,10 @@ class EvalBScans(Dataset):
     Returns ``(bscan, volume_name, y)``.
     """
 
-    def __init__(self, root, split="val", per_volume=8, divisor=16):
+    def __init__(self, root, split="val", per_volume=8, divisor=16, sources=None):
         self.vols = PreparedVolumes(root)
         self.items = []
-        for name, y0, y1 in self.vols.ranges(split):
+        for name, y0, y1 in self.vols.ranges(split, sources):
             ys = range(y0, y1)
             if per_volume is not None and len(ys) > per_volume:
                 ys = np.linspace(y0, y1 - 1, per_volume).round().astype(int)

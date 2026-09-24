@@ -28,7 +28,7 @@ from torch.utils.data import DataLoader
 
 from .config import load_config
 from .data import EvalBScans, TrainPatches
-from .evaluation import evaluate
+from .evaluation import amp_dtype, evaluate
 from .losses import ReconLoss
 from .models.reconstructors import build_model
 from .physics import measure
@@ -87,12 +87,16 @@ def main():
     opt = torch.optim.AdamW(model.parameters(), lr=ocfg["lr"], weight_decay=ocfg["weight_decay"])
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda(ocfg["warmup_steps"], ocfg["steps"]))
     loss_fn = ReconLoss(**cfg["loss"])
+    dtype = amp_dtype(tcfg.get("precision", "auto"))
+    scaler = torch.amp.GradScaler("cuda", enabled=dtype == torch.float16)
 
     step, best = 0, None
     ckpt_path = run_dir / "latest.pt"
     if ckpt_path.exists():
         ck = torch.load(ckpt_path, map_location=device, weights_only=False)
         model.load_state_dict(ck["model"])
+        if "scaler" in ck:
+            scaler.load_state_dict(ck["scaler"])
         ema.load_state_dict(ck["ema"])
         opt.load_state_dict(ck["opt"])
         sched.load_state_dict(ck["sched"])
@@ -105,18 +109,20 @@ def main():
         train_model = torch.compile(train_model)
 
     train_ds = TrainPatches(dcfg["root"], patch=tuple(dcfg["patch"]), seed=cfg["seed"] + step,
-                            rank=rank, min_energy=dcfg["min_energy"], divisor=divisor)
+                            rank=rank, min_energy=dcfg["min_energy"], divisor=divisor,
+                            sources=dcfg.get("sources"))
     loader = DataLoader(train_ds, batch_size=dcfg["batch_size"], num_workers=dcfg["num_workers"],
                         pin_memory=True, drop_last=True, persistent_workers=dcfg["num_workers"] > 0)
-    val_ds = EvalBScans(dcfg["root"], "val", per_volume=dcfg["val_per_volume"], divisor=divisor) if is_main else None
+    val_ds = EvalBScans(dcfg["root"], "val", per_volume=dcfg["val_per_volume"], divisor=divisor,
+                        sources=dcfg.get("sources")) if is_main else None
 
     if is_main:
         print(f"model={cfg['model']['type']} params={n_params / 1e6:.2f}M world={world} "
-              f"train_ranges={len(train_ds.ranges)} val_bscans={len(val_ds)} K={K}")
+              f"train_ranges={len(train_ds.ranges)} val_bscans={len(val_ds)} K={K} amp={dtype}")
 
     def save(path):
         torch.save(dict(model=model.state_dict(), ema=ema.state_dict(), opt=opt.state_dict(),
-                        sched=sched.state_dict(), step=step, best=best, cfg=cfg), path)
+                        sched=sched.state_dict(), scaler=scaler.state_dict(), step=step, best=best, cfg=cfg), path)
 
     def log(record):
         with open(run_dir / "log.jsonl", "a") as f:
@@ -125,7 +131,7 @@ def main():
     def validate():
         nonlocal best
         summary, per_source, examples, _ = evaluate(ema.module, val_ds, K, device, dcfg["tissue_db"],
-                                                    bf16=tcfg["bf16"], keep=1)
+                                                    amp_dtype=dtype, keep=1)
         for method, m in summary.items():
             print(f"[val {step}] {method:14s} {fmt(m)}")
         log(dict(step=step, kind="val", metrics=summary, per_source=per_source))
@@ -149,14 +155,16 @@ def main():
         x = next(it).to(device, non_blocking=True)
         offset = int(rng.integers(K))
         x_meas = measure(x, K, offset)
-        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=tcfg["bf16"]):
+        with torch.autocast("cuda", dtype=dtype or torch.float32, enabled=dtype is not None):
             x_hat = train_model(x_meas, K, offset)
         loss, terms = loss_fn(x_hat.to(torch.complex64), x, step)
 
         opt.zero_grad(set_to_none=True)
-        loss.backward()
+        scaler.scale(loss).backward()
+        scaler.unscale_(opt)
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), ocfg["grad_clip"])
-        opt.step()
+        scaler.step(opt)
+        scaler.update()
         sched.step()
         ema.update_parameters(model)
         step += 1
