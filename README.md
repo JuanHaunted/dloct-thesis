@@ -28,6 +28,26 @@ forward process is the *physical* sampling degradation rather than Gaussian nois
 
 | Path | Role | State |
 |---|---|---|
+| `src/dloct/sampling_analysis.py` | MPS / Gaussian-fit sampling analysis (numpy) | Sound |
+| `src/dloct/models/convnext_unet.py` | ConvNeXt U-Net, linear attention, time embedding | Imports; to be reworked |
+| `src/dloct/diffusion/aliasing_diffusion.py` | Cold diffusion, Gaussian mask + sampler | Wrong operator (see §3); to be replaced |
+| `configs/` | Experiment configs (YAML) | — |
+| `scripts/` | SLURM job scripts | — |
+| `tests/` | Operator assertions (§4) | — |
+| `notebooks/` | Sampling-theory analysis (MPS, decimation, aliasing) | Exploratory |
+| `figures/` | Thesis figures | — |
+| `docs/literature_review.md` | Literature review: complex/phase-aware reconstruction | — |
+| `docs/dloct_math.pdf` | Math notes | — |
+| `data/` | Local data sample (git-ignored, see `data/README.md`) | — |
+
+### Setup
+
+```bash
+uv sync          # creates .venv with torch (CUDA 12.8 wheels) and the dloct package
+uv run pytest    # operator tests
+```
+
+---|---|---|
 | `src/lateral_sampling.py` | MPS / Gaussian-fit sampling analysis | Sound, one missing function |
 | `src/prepare_dataset.py` | Builds subsampled training pairs | Runs; redundant with on-the-fly degradation |
 | `src/diffusion/aliasing_diffusion.py` | Cold diffusion, Gaussian mask + sampler | Does not run |
