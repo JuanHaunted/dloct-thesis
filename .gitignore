@@ -5,6 +5,7 @@ build/
 dist/
 wheels/
 *.egg-info
+.pytest_cache/
 
 # Virtual environments
 .venv
@@ -12,5 +13,16 @@ wheels/
 # Environment variables
 .env
 
-# data
-data/
+# Data and training outputs (never commit)
+data/*
+!data/README.md
+runs/
+checkpoints/
+logs/
+slurm-*.out
+*.pt
+*.ckpt
+
+# Editor / local tool config
+.vscode/
+.claude/settings.local.json

@@ -124,7 +124,7 @@ class AliasingDiffusion(nn.Module):
         """
         self.denoise_fn.eval()
         
-        b = x_T.shape
+        b = x_T.shape[0]
         device = x_T.device
         
         x_t = x_T # Start at the maximally degraded state

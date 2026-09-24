@@ -28,7 +28,7 @@ Date: 2024
 """
 
 import numpy as np
-from numpy.fft import fft, fftshift, ifftshift, fft2
+from numpy.fft import fft, ifft, fftshift, ifftshift, fft2
 from scipy.optimize import curve_fit
 from scipy.interpolate import interp1d
 from scipy.ndimage import zoom
@@ -479,6 +479,38 @@ def subsample_lateral(
     # FFT-based interpolation (sinc interpolation via zero-padding)
     # This preserves the frequency content including aliased components
     return _fft_interpolate(subsampled, original_n, axis)
+
+
+def _fft_interpolate(data: np.ndarray, target_n: int, axis: int) -> np.ndarray:
+    """
+    Sinc-interpolate ``data`` to ``target_n`` samples along ``axis`` by zero-padding
+    its centered spectrum. Existing samples are preserved exactly (for integer
+    upsampling ratios). For even input length the Nyquist bin is split evenly
+    between +/- Nyquist so real inputs stay real.
+    """
+    n = data.shape[axis]
+    if n == target_n:
+        return data.copy()
+    if target_n < n:
+        raise ValueError(f"target_n ({target_n}) must be >= input length ({n})")
+
+    spec = fftshift(fft(data, axis=axis), axes=axis)
+    pad_lo = target_n // 2 - n // 2
+    pad = [(0, 0)] * data.ndim
+    pad[axis] = (pad_lo, target_n - n - pad_lo)
+    padded = np.pad(spec, pad)
+
+    if n % 2 == 0:
+        # Split the (unpaired) Nyquist bin of the input across both band edges.
+        lo = [slice(None)] * data.ndim
+        hi = [slice(None)] * data.ndim
+        lo[axis] = pad_lo
+        hi[axis] = pad_lo + n
+        padded[tuple(lo)] *= 0.5
+        padded[tuple(hi)] = padded[tuple(lo)]
+
+    out = ifft(ifftshift(padded, axes=axis), axis=axis) * (target_n / n)
+    return out if np.iscomplexobj(data) else out.real
 
 
 def _linear_interpolate_1d(data: np.ndarray, target_n: int, axis: int) -> np.ndarray:

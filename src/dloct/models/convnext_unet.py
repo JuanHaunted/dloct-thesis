@@ -2,6 +2,7 @@ import math
 import torch
 import torch.nn as nn
 from inspect import isfunction
+from typing import Callable
 from einops import rearrange
 
 def exists(x):
@@ -62,7 +63,7 @@ class Residual(nn.Module):
     Attributes:
         fn: Function that computes the given input
     """
-    def __init__(self, fn: nn.Module | callable[..., torch.Tensor]):
+    def __init__(self, fn: nn.Module | Callable[..., torch.Tensor]):
         super().__init__()
         self.fn = fn
 
