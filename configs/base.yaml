@@ -9,7 +9,7 @@ data:
   factor: 2            # lateral decimation K. Real tomograms are near Nyquist (K* ~ 1), so K=2
                        # already aliases; K=4 is the harder follow-up (see meta.json diagnostics)
   patch: [256, 256]    # (Z, X) training crop
-  batch_size: 8        # per GPU
+  batch_size: 16       # per GPU (H100 NVL, 94 GB)
   num_workers: 8
   min_energy: 1.0e-3   # reject near-empty patches (mean |x|^2, normalized units)
   val_per_volume: 8    # full B-scans per validation volume
