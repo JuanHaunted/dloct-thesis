@@ -10,7 +10,7 @@ confirmation from apolo@eafit.edu.co.
 |---|---|
 | Access | VPN (GlobalProtect portal `leto.omega.eafit.edu.co`), then `ssh ugr-jcospinav@apolo-3.eafit.edu.co` |
 | OS | Rocky Linux 9.5, glibc 2.34 |
-| GPUs | partition `accel`: one node `a3-accel-0`, 2 GPUs, 64 CPUs, 257 GB RAM. GPU model and driver: see the GPU check below |
+| GPUs | partition `accel`: one node `a3-accel-0`, 2× NVIDIA H100 NVL (94 GB, sm_90, bf16), driver 575.57, 64 CPUs, 257 GB RAM |
 | Other partitions | `longjobs` (6 days), `bigmem` (4 days), CPU only |
 | Time limit | `accel`: 3 days (`--time` is mandatory, format `D-HH:MM:SS`) |
 | Account | `optics` (default association, nothing to set) |

@@ -25,7 +25,7 @@ cd "${SLURM_SUBMIT_DIR}"
 source scripts/env.sh
 NGPU=$(python -c "import torch; print(torch.cuda.device_count())")   # GPUs allocated to this job
 WORKERS=$(( ${SLURM_CPUS_PER_TASK:-8} / NGPU - 1 ))
-echo "host=$(hostname) gpus=${NGPU} workers/gpu=${WORKERS} config=${CONFIG} data=${DATA_ROOT}"
+echo "host=$(hostname) CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset} gpus=${NGPU} workers/gpu=${WORKERS} config=${CONFIG} data=${DATA_ROOT}"
 nvidia-smi
 
 export OMP_NUM_THREADS=1 PYTHONUNBUFFERED=1
