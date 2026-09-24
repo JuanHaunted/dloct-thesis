@@ -17,7 +17,7 @@ import torch
 import yaml
 
 from .data import EvalBScans
-from .evaluation import evaluate
+from .evaluation import amp_dtype, evaluate
 from .models.reconstructors import build_model
 from .sampling_analysis import compute_spectral_halfwidth
 from .visualize import comparison_figure, mps_figure
@@ -59,9 +59,9 @@ def main():
     divisor = math.lcm(model.divisor, K)
 
     ds = EvalBScans(args.data_root or dcfg["root"], args.split, per_volume=args.per_volume or None,
-                    divisor=divisor)
+                    divisor=divisor, sources=dcfg.get("sources"))
     summary, per_source, examples, spectra = evaluate(model, ds, K, device, dcfg["tissue_db"],
-                                                      bf16=cfg["train"]["bf16"], keep=args.examples)
+                                                      amp_dtype=amp_dtype(cfg["train"].get("precision", "auto")), keep=args.examples)
 
     out = run / f"eval_{args.split}"
     out.mkdir(exist_ok=True)

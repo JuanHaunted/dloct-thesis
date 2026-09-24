@@ -2,5 +2,5 @@
 # Expected to reconstruct amplitude and destroy phase.
 defaults: base.yaml
 name: unet_magnitude
-loss: {charbonnier: 0.0, magnitude: 1.0, phase: 0.0, dphase: 0.0, fft: 0.0}
+loss: {charbonnier: 0.0, magnitude: 1.0, log_magnitude: 0.0, phase: 0.0, dphase: 0.0, fft: 0.0}
 train: {select_metric: psnr_db}
