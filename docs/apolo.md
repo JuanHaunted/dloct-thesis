@@ -9,7 +9,7 @@ confirmation from apolo@eafit.edu.co.
 | | |
 |---|---|
 | Access | VPN required (GlobalProtect portal `leto.omega.eafit.edu.co`, or `vpnc` on Linux), then `ssh <user>@apolo.eafit.edu.co` |
-| GPUs | partition `accel-2`, Tesla V100 (compute capability 7.0: no bf16, so training uses fp16 automatically) |
+| GPUs | partition `accel-2`: one node with 2× Tesla V100 (compute capability 7.0: no bf16, so training uses fp16 automatically) |
 | Old GPUs | partition `accel`, Tesla K80. Too old for this PyTorch build, do not use |
 | Time limit | `--time` is mandatory (format `D-HH:MM:SS`). Max walltime: **ask staff** |
 | Per-user cap | 96 CPUs and 192 GB memory (QOS) |
@@ -19,10 +19,21 @@ confirmation from apolo@eafit.edu.co.
 | Driver | not documented. Our PyTorch build (CUDA 12.6) needs driver ≥ 525. Check with `nvidia-smi` on a GPU node |
 
 Questions to email staff:
-1. How many V100s per node on `accel-2`, with how much memory, and what is the max walltime?
+1. What is the max walltime on `accel-2`?
 2. Where should a ~30 GB dataset live (home quota or a scratch path)?
 3. Do the login and compute nodes have internet access (pip/PyPI)?
 4. What is the NVIDIA driver version on `accel-2`?
+
+## 0. Probe the cluster
+
+`scripts/apolo_probe.sh` answers most of the open questions above. It is read-only and writes
+`~/apolo_report.txt`:
+
+```bash
+scp scripts/apolo_probe.sh <user>@apolo.eafit.edu.co:~/
+ssh <user>@apolo.eafit.edu.co 'bash ~/apolo_probe.sh'
+scp <user>@apolo.eafit.edu.co:~/apolo_report.txt .
+```
 
 ## 1. Upload code and data (from your machine, VPN on)
 
@@ -84,5 +95,5 @@ sbatch scripts/eval.slurm runs/unet_full                   # after training
 ```
 
 - If a job hits its time limit, resubmit the same command. It resumes from `runs/<name>/latest.pt`.
-- Adjust `#SBATCH --gres=gpu:N` in `scripts/train.slurm` to the GPUs per node.
+- The node has 2 GPUs. Two jobs of `--gres=gpu:2` run one after the other; to run two experiments at once, submit each with `sbatch --gres=gpu:1 ...`.
 - Copy results back with `rsync -avP <user>@apolo.eafit.edu.co:~/dloct-thesis/runs/ ./runs/`.

@@ -26,3 +26,4 @@ slurm-*.out
 # Editor / local tool config
 .vscode/
 .claude/settings.local.json
+apolo_report.txt

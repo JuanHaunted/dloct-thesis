@@ -4,7 +4,7 @@
 #   sbatch scripts/train.slurm configs/unet_full.yaml [--set key=value ...]
 #
 # Resubmitting the same command resumes from runs/<name>/latest.pt.
-# Defaults are for EAFIT Apolo (accel-2, V100). Check GPUs per node with `sinfo -p accel-2 -o "%N %G"`.
+# Defaults are for EAFIT Apolo: accel-2 is a single node with 2x V100.
 #SBATCH --job-name=dloct
 #SBATCH --partition=accel-2          # Apolo V100 partition
 #SBATCH --nodes=1
