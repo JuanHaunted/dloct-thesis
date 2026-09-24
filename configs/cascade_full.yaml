@@ -1,0 +1,12 @@
+# Model B: unrolled physics-informed cascade, 5 x (small U-Net -> exact data consistency),
+# trained end-to-end through the DC layers. Full phase-aware loss.
+defaults: base.yaml
+name: cascade_full
+model:
+  type: dc_cascade
+  n_stages: 5
+  share_weights: false
+  grad_checkpoint: true
+  base: 32
+  mults: [1, 2, 4, 8]
+  depth: 2

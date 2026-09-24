@@ -1,59 +1,94 @@
-# DLOCT — Cold Diffusion for Sub-Nyquist OCT Reconstruction
+# DLOCT — Physics-Informed Reconstruction of Sub-Nyquist Complex OCT
 
-Recovering laterally undersampled complex OCT tomograms with a cold-diffusion model whose
-forward process is the *physical* sampling degradation rather than Gaussian noise.
+Recovering laterally undersampled **complex** OCT tomograms, amplitude *and phase*, with CNNs
+that embed the physical sampling operator. Phase is what functional OCT (Doppler, OCTA,
+elastography) consumes, and it is what prior reconstruction work discards.
 
-> **Status: pre-training prototype.** The sampling-theory analysis is substantially complete and
-> sound. The diffusion model does not yet run — see [Known issues](#8-known-issues). There is no
-> training script, dataset class, or config system. This README is the specification the code
-> should be brought in line with.
+> **Status:** training pipeline runs end to end (tested on synthetic data). Two models:
+> **A** — single-shot ConvNeXt U-Net + data consistency at inference; **B** — unrolled
+> physics-informed cascade (U-Net → exact DC, ×5), trained through the DC layers. Design
+> rationale and references: [`docs/literature_review.md`](docs/literature_review.md).
+> Parts III–IV below describe the earlier cold-diffusion design and are kept as background.
 
 ---
 
 ## Contents
 
-1. [Repository layout](#1-repository-layout)
+1. [Repository layout and usage](#1-repository-layout-and-usage)
 2. [Part I — Sampling theory](#2-part-i--sampling-theory)
 3. [Part II — Which degradation operator is correct](#3-part-ii--which-degradation-operator-is-correct)
 4. [Part III — The target operator](#4-part-iii--the-target-operator)
 5. [Part IV — Cold diffusion](#5-part-iv--cold-diffusion)
 6. [Part V — Data consistency](#6-part-v--data-consistency)
 7. [Notation reference](#7-notation-reference)
-8. [Known issues](#8-known-issues)
+8. [Status of the original issues](#8-status-of-the-original-issues)
 9. [References](#9-references)
 
 ---
 
-## 1. Repository layout
+## 1. Repository layout and usage
 
-| Path | Role | State |
-|---|---|---|
-| `src/dloct/sampling_analysis.py` | MPS / Gaussian-fit sampling analysis (numpy) | Sound |
-| `src/dloct/models/convnext_unet.py` | ConvNeXt U-Net, linear attention, time embedding | Imports; to be reworked |
-| `src/dloct/diffusion/aliasing_diffusion.py` | Cold diffusion, Gaussian mask + sampler | Wrong operator (see §3); to be replaced |
-| `configs/` | Experiment configs (YAML) | — |
-| `scripts/` | SLURM job scripts | — |
-| `tests/` | Operator assertions (§4) | — |
-| `notebooks/` | Sampling-theory analysis (MPS, decimation, aliasing) | Exploratory |
-| `figures/` | Thesis figures | — |
-| `docs/literature_review.md` | Literature review: complex/phase-aware reconstruction | — |
-| `docs/dloct_math.pdf` | Math notes | — |
-| `data/` | Local data sample (git-ignored, see `data/README.md`) | — |
+| Path | Role |
+|---|---|
+| `src/dloct/physics.py` | Operator C: lateral decimation + sinc interpolation, exact data consistency |
+| `src/dloct/models/unet.py` | ConvNeXt U-Net (Re/Im + measured-A-line mask in, Re/Im out) |
+| `src/dloct/models/reconstructors.py` | Model A `SingleShot`, Model B `DCCascade` |
+| `src/dloct/losses.py` | Complex Charbonnier, amplitude-weighted phase, inter-A-line Δφ, lateral-FFT losses |
+| `src/dloct/metrics.py` | dB-amplitude PSNR/SSIM, complex NRMSE, \|ρ\|, phase and Doppler Δφ error, speckle contrast |
+| `src/dloct/data.py`, `prepare_data.py` | Volume conversion, split by sample, patch/B-scan datasets |
+| `src/dloct/train.py`, `eval.py` | Training (DDP, bf16, EMA, auto-resume) and test-set evaluation |
+| `src/dloct/sampling_analysis.py` | MPS / Gaussian-fit sampling analysis (Part I) |
+| `configs/` | `base.yaml` + one file per experiment |
+| `scripts/` | SLURM jobs, cluster setup, fake-data generator |
+| `tests/` | Operator, loss and model invariants |
+| `notebooks/` | Sampling-theory analysis (MPS, decimation, aliasing) |
+| `docs/` | Literature review, math notes |
+| `data/` | Local data sample (git-ignored; see `data/README.md`) |
 
-### Setup
+### Experiments
+
+| Config | Model | Loss | Purpose |
+|---|---|---|---|
+| `unet_full` | A | full phase-aware | main single-shot result |
+| `cascade_full` | B | full phase-aware | physics-informed unrolled model |
+| `unet_complex` | A | complex Charbonnier only | does the explicit phase term help? |
+| `unet_magnitude` | A | amplitude L1 only | what prior work does; shows phase destruction |
+
+Every evaluation also reports plain sinc **interpolation** (the measurement itself) and, for
+model A, the output **with data consistency** (measured A-lines re-inserted).
+
+### Local
 
 ```bash
-uv sync          # creates .venv with torch (CUDA 12.8 wheels) and the dloct package
-uv run pytest    # operator tests
+uv sync                                          # env with torch (CUDA 12.8 wheels)
+uv run pytest                                    # operator / loss / model tests
+uv run python -m dloct.prepare_data --src data/train --out data/prepared
+uv run python -m dloct.train --config configs/unet_full.yaml --set optim.steps=500 data.batch_size=4
+uv run python -m dloct.eval --run runs/unet_full
 ```
 
----|---|---|
-| `src/lateral_sampling.py` | MPS / Gaussian-fit sampling analysis | Sound, one missing function |
-| `src/prepare_dataset.py` | Builds subsampled training pairs | Runs; redundant with on-the-fly degradation |
-| `src/diffusion/aliasing_diffusion.py` | Cold diffusion, Gaussian mask + sampler | Does not run |
-| `src/models/spectral_diffusion.py` | Cold diffusion, brick-wall mask, no sampler | Trains; cannot reconstruct |
-| `src/models/convnext_unet.py` | ConvNeXt U-Net, linear attention, time embedding | Does not import |
-| `notebooks/` | Sampling theory, wavelets, Gabor experiments | Exploratory |
+No real data at hand? `uv run python scripts/make_fake_data.py` writes small synthetic volumes.
+
+### Cluster (SLURM)
+
+```bash
+bash scripts/setup_cluster.sh                    # once, on a login node
+# edit the #SBATCH partition/account lines in scripts/*.slurm
+export DLOCT_DATA=/scratch/$USER/dloct/prepared
+sbatch scripts/prepare.slurm /path/to/raw/train $DLOCT_DATA      # once
+sbatch scripts/train.slurm configs/unet_full.yaml
+sbatch scripts/train.slurm configs/cascade_full.yaml
+sbatch scripts/eval.slurm runs/unet_full
+```
+
+Runs write to `runs/<name>/` (`log.jsonl`, `previews/`, `best.pt`, `latest.pt`). Resubmitting
+the same job resumes from `latest.pt`. Any config key can be overridden with
+`--set key=value`, e.g. `--set data.factor=2 name=unet_full_k2`.
+
+**Data format.** Raw volumes are `(Z, X, Y)` complex or `(Z, X, Y, 2)` Re/Im `.npy` (depth,
+fast axis, slow axis). `prepare_data` rewrites them as B-scan-major complex64 `(Y, Z, X)`,
+stores each volume's 99.9th-percentile amplitude as its normalization scale, and assigns
+splits **by sample**. Polarization channels of the same acquisition stay together.
 
 ---
 
@@ -365,57 +400,12 @@ makes this point and it is correct — a subtlety much published work gets wrong
 
 ---
 
-## 8. Known issues
+## 8. Status of the original issues
 
-### Blocking
-
-1. **`convnext_unet.py:65` does not import.** `fn: nn.Module | callable[..., torch.Tensor]` uses
-   the builtin `callable`, not `typing.Callable`; annotations evaluate at class-definition time.
-   `TypeError: 'builtin_function_or_method' object is not subscriptable`.
-2. **`lateral_sampling.py:481` calls undefined `_fft_interpolate`.** Only `_linear_interpolate_1d`
-   exists, so `subsample_lateral(..., interpolate=True)` is a guaranteed `NameError`.
-3. **`aliasing_diffusion.py:127`** — `b = x_T.shape` should be `x_T.shape[0]`; `sample()` raises
-   `TypeError` immediately.
-4. **No training infrastructure.** No `Dataset`, `DataLoader`, optimizer, checkpointing, or config.
-   The `EMA` class is defined and never used. `main.py` is a hello-world.
-
-### Design
-
-5. **Neither degradation implements aliasing** (§3–4) — the central issue.
-6. **No normalization anywhere.** Raw linear OCT Re/Im spans orders of magnitude, so $\ell_1$ will
-   be dominated by the brightest pixels. Needs a **linearity-preserving** scale (e.g. per-volume
-   99.9th-percentile amplitude) — log compression would break the linearity the FFT degradation
-   depends on. Probably the largest practical obstacle to convergence.
-7. **No baseline.** A single-shot U-Net regressing measurement $\to x_0$, same architecture and
-   data, must be built and beaten. This is the first question a committee will ask.
-8. **Six volumes, no split.** B-scans within a volume are heavily correlated — split by **volume**,
-   not by B-scan.
-9. **`prepare_dataset.py` is redundant.** Cold diffusion applies `q_sample` on the fly at random
-   $t$; it never wants pre-degraded pairs. As written it materializes 5 factors × 2 axes of
-   full-size copies — 20+ GB per volume. It should emit clean $x_0$ patches only.
-10. **Axis conventions conflict.** `visualize_downsampling.py` assumes `(B-scan, Z, X, 2)`;
-    `lateral_sampling.py` assumes `(depth, x, y[, 2])`.
-11. **Minor.** `to_complex` silently drops all but the first polarimetric channel (files are named
-    `polInt1_polOut2`); `ComplexSafeLayerNorm`'s per-channel gain/bias contradicts its docstring
-    promise that Re/Im are scaled by the same scalar; `sample()` unconditionally calls `.train()`
-    on exit; `image_size` is stored and never used; odd $W$ breaks the identity contract by one bin.
-
-### Verified working
-
-The U-Net channel arithmetic is correct — all four resolution levels and skip concatenations were
-traced by hand.
-
-### Suggested order
-
-1. Fix issues 1–3.
-2. Implement §4 in `aliasing_diffusion.py`; add the two assertions. Delete `spectral_diffusion.py`
-   after porting its DC step.
-3. Normalization + `Dataset` (patches, split by volume).
-4. Training script **and** the single-shot baseline together.
-5. Metrics: PSNR/SSIM on log-amplitude; complex correlation coefficient for phase; and — most
-   relevant to the framing — does the recovered MPS half-width match ground truth? Part I already
-   has the tooling for that last one, and it is the metric that most directly tests "did we undo
-   the aliasing."
+- **Blocking bugs 1–3:** fixed during the reorganization.
+- **Issues 4 and 6–10:** superseded by the pipeline in §1. That covers the training script, the linear per-volume normalization, the interpolation baseline, the split by sample, on-the-fly degradation, and a single axis convention.
+- **Issue 5 (no aliasing operator):** `physics.measure` is operator C, i.e. true decimation followed by sinc interpolation, tested against the numpy reference.
+- **Cold diffusion:** the modules were removed from the tree and remain in git history. Given the time budget, the unrolled DC cascade takes its place as the iterative model. See the literature review, §4.
 
 ---
 

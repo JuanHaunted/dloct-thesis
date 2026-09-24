@@ -1,0 +1,4 @@
+# Ablation: single-shot U-Net, complex Charbonnier only (no explicit phase terms).
+defaults: base.yaml
+name: unet_complex
+loss: {phase: 0.0, dphase: 0.0, fft: 0.0}

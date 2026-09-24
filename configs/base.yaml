@@ -1,0 +1,45 @@
+# Shared defaults. Experiment configs set `defaults: base.yaml` and override what differs.
+name: base
+seed: 0
+out_dir: runs
+
+data:
+  root: data/prepared
+  factor: 4            # lateral decimation K; phantom analysis gives K* ~ 2.1, so K=4 is aliased
+  patch: [256, 256]    # (Z, X) training crop
+  batch_size: 8        # per GPU
+  num_workers: 8
+  min_energy: 1.0e-3   # reject near-empty patches (mean |x|^2, normalized units)
+  val_per_volume: 8    # full B-scans per validation volume
+  tissue_db: -30.0     # phase metrics only where |x| > -30 dB of the P99.9 amplitude
+
+model:
+  type: single_shot
+  base: 64
+  mults: [1, 2, 4, 8]
+  depth: 2
+
+loss:
+  charbonnier: 1.0
+  magnitude: 0.0
+  phase: 0.1
+  dphase: 0.1
+  fft: 0.01
+  warmup_steps: 5000   # ramp the phase terms in
+
+optim:
+  lr: 2.0e-4
+  weight_decay: 1.0e-4
+  warmup_steps: 1000
+  steps: 100000
+  grad_clip: 1.0
+  ema: 0.999
+
+train:
+  bf16: true
+  compile: false
+  log_every: 50
+  val_every: 2500
+  ckpt_every: 2500
+  select_metric: rho_local   # checkpoint selection on validation (EMA weights)
+  select_mode: max
