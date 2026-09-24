@@ -28,4 +28,4 @@ fi
 source scripts/env.sh
 python -c "import torch, dloct; print('torch', torch.__version__, 'CUDA build', torch.version.cuda, 'archs', torch.cuda.get_arch_list())"
 echo "OK. On a GPU node, check the driver (needs >= 525):"
-echo "  srun -p accel-2 --gres=gpu:1 -t 0-00:10:00 --pty nvidia-smi"
+echo "  srun -p accel --gres=gpu:1 -t 0-00:10:00 --pty nvidia-smi"

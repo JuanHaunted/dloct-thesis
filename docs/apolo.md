@@ -4,25 +4,19 @@ Facts below come from the [Apolo user docs](https://github.com/eafit-apolo/apolo
 Those docs are partly outdated and silent on several points. Items marked **ask staff** need
 confirmation from apolo@eafit.edu.co.
 
-## What we know
+## What we know (probed 2026-09-24 on apolo-3)
 
 | | |
 |---|---|
-| Access | VPN required (GlobalProtect portal `leto.omega.eafit.edu.co`, or `vpnc` on Linux), then `ssh ugr-jcospinav@apolo-3.eafit.edu.co` |
-| GPUs | partition `accel-2`: one node with 2× Tesla V100 (compute capability 7.0: no bf16, so training uses fp16 automatically) |
-| Old GPUs | partition `accel`, Tesla K80. Too old for this PyTorch build, do not use |
-| Time limit | `--time` is mandatory (format `D-HH:MM:SS`). Max walltime: **ask staff** |
-| Per-user cap | 96 CPUs and 192 GB memory (QOS) |
-| Account string | none mentioned in the docs |
-| Storage | home is `/home/<user>`. Scratch location, quotas and where a 30 GB dataset should live: **ask staff** |
-| Internet on nodes | not documented. `setup_cluster.sh` detects it and falls back to an offline wheel bundle |
-| Driver | not documented. Our PyTorch build (CUDA 12.6) needs driver ≥ 525. Check with `nvidia-smi` on a GPU node |
-
-Questions to email staff:
-1. What is the max walltime on `accel-2`?
-2. Where should a ~30 GB dataset live (home quota or a scratch path)?
-3. Do the login and compute nodes have internet access (pip/PyPI)?
-4. What is the NVIDIA driver version on `accel-2`?
+| Access | VPN (GlobalProtect portal `leto.omega.eafit.edu.co`), then `ssh ugr-jcospinav@apolo-3.eafit.edu.co` |
+| OS | Rocky Linux 9.5, glibc 2.34 |
+| GPUs | partition `accel`: one node `a3-accel-0`, 2 GPUs, 64 CPUs, 257 GB RAM. GPU model and driver: see the GPU check below |
+| Other partitions | `longjobs` (6 days), `bigmem` (4 days), CPU only |
+| Time limit | `accel`: 3 days (`--time` is mandatory, format `D-HH:MM:SS`) |
+| Account | `optics` (default association, nothing to set) |
+| Storage | `/home` (37 TB, 31 TB free), no user quota. Data lives in `~/dloct/` |
+| Internet | login node reaches PyPI, download.pytorch.org and GitHub. `uv` setup works online |
+| Modules | `cuda/12.5` only. Not needed: PyTorch wheels ship their own CUDA runtime |
 
 ## 0. Probe the cluster
 
