@@ -22,9 +22,9 @@ section "partitions (sinfo)"
 sinfo -s
 sinfo -o "%P %a %l %D %c %m %G %N" 2>&1
 
-section "accel-2 details"
-scontrol show partition accel-2 2>&1 | grep -oE "(MaxTime|DefaultTime|MaxNodes|State|AllowAccounts|AllowGroups|AllowQos|QoS|TRES)=[^ ]*"
-scontrol show node "$(sinfo -h -p accel-2 -o %N | head -1)" 2>&1 | grep -oE "(Gres|CPUTot|RealMemory|State|CfgTRES)=[^ ]*"
+section "accel details"
+scontrol show partition accel 2>&1 | grep -oE "(MaxTime|DefaultTime|MaxNodes|State|AllowAccounts|AllowGroups|AllowQos|QoS|TRES)=[^ ]*"
+scontrol show node "$(sinfo -h -p accel -o %N | head -1)" 2>&1 | grep -oE "(Gres|CPUTot|RealMemory|State|CfgTRES)=[^ ]*"
 
 section "my account / QOS"
 sacctmgr -nP show assoc user="$USER" format=cluster,account,partition,qos,maxwall 2>&1 | head -20
@@ -48,8 +48,8 @@ for t in rsync git curl wget python3 conda uv tmux screen; do printf '  %-8s %s\
 module -t avail python 2>&1 | head -30
 module -t avail cuda 2>&1 | head -15
 
-section "GPU node (5-minute job on accel-2, waits up to 15 min in queue)"
-timeout 900 srun -p accel-2 --gres=gpu:1 -N 1 -n 1 -c 2 --mem=4G -t 0-00:05:00 bash -c '
+section "GPU node (5-minute job on accel, waits up to 15 min in queue)"
+timeout 900 srun -p accel --gres=gpu:1 -N 1 -n 1 -c 2 --mem=4G -t 0-00:05:00 bash -c '
     echo "node=$(hostname) cpus=$(nproc)"; free -g | head -2
     nvidia-smi --query-gpu=name,memory.total,driver_version,compute_cap --format=csv
     nvidia-smi | head -5
@@ -58,7 +58,7 @@ timeout 900 srun -p accel-2 --gres=gpu:1 -N 1 -n 1 -c 2 --mem=4G -t 0-00:05:00 b
         printf "  %-45s %s\n" "$u" "$(curl -sS -m 10 -o /dev/null -w %{http_code} "$u" 2>/dev/null || echo FAIL)"
     done
     df -h /tmp | tail -1
-' 2>&1 || echo "GPU job did not run (queued too long, no permission for accel-2, or error above)"
+' 2>&1 || echo "GPU job did not run (queued too long, no permission for accel, or error above)"
 
 section "done"
 echo "report written to $OUT"

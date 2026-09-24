@@ -4,14 +4,14 @@
 #   sbatch scripts/train.slurm configs/unet_full.yaml [--set key=value ...]
 #
 # Resubmitting the same command resumes from runs/<name>/latest.pt.
-# Defaults are for EAFIT Apolo: accel-2 is a single node with 2x V100.
+# Defaults are for EAFIT Apolo-3: partition accel is a single node with 2 GPUs.
 #SBATCH --job-name=dloct
-#SBATCH --partition=accel-2          # Apolo V100 partition
+#SBATCH --partition=accel            # Apolo-3 GPU node a3-accel-0 (2 GPUs, 64 CPUs, 257 GB)
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:2
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=32
 #SBATCH --mem=96G
-#SBATCH --time=2-00:00:00          # mandatory on Apolo (D-HH:MM:SS); ask staff for the max
+#SBATCH --time=3-00:00:00          # accel partition maximum
 #SBATCH --output=slurm-%x-%j.out
 
 set -euo pipefail

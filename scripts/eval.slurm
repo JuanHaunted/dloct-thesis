@@ -3,7 +3,7 @@
 #
 #   sbatch scripts/eval.slurm runs/unet_full [extra dloct.eval args]
 #SBATCH --job-name=dloct-eval
-#SBATCH --partition=accel-2          # Apolo V100 partition
+#SBATCH --partition=accel            # Apolo-3 GPU node a3-accel-0 (2 GPUs, 64 CPUs, 257 GB)
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
