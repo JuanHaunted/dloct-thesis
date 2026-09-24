@@ -8,7 +8,7 @@ confirmation from apolo@eafit.edu.co.
 
 | | |
 |---|---|
-| Access | VPN required (GlobalProtect portal `leto.omega.eafit.edu.co`, or `vpnc` on Linux), then `ssh <user>@apolo.eafit.edu.co` |
+| Access | VPN required (GlobalProtect portal `leto.omega.eafit.edu.co`, or `vpnc` on Linux), then `ssh ugr-jcospinav@apolo-3.eafit.edu.co` |
 | GPUs | partition `accel-2`: one node with 2× Tesla V100 (compute capability 7.0: no bf16, so training uses fp16 automatically) |
 | Old GPUs | partition `accel`, Tesla K80. Too old for this PyTorch build, do not use |
 | Time limit | `--time` is mandatory (format `D-HH:MM:SS`). Max walltime: **ask staff** |
@@ -30,9 +30,9 @@ Questions to email staff:
 `~/apolo_report.txt`:
 
 ```bash
-scp scripts/apolo_probe.sh <user>@apolo.eafit.edu.co:~/
-ssh <user>@apolo.eafit.edu.co 'bash ~/apolo_probe.sh'
-scp <user>@apolo.eafit.edu.co:~/apolo_report.txt .
+scp scripts/apolo_probe.sh ugr-jcospinav@apolo-3.eafit.edu.co:~/
+ssh ugr-jcospinav@apolo-3.eafit.edu.co 'bash ~/apolo_probe.sh'
+scp ugr-jcospinav@apolo-3.eafit.edu.co:~/apolo_report.txt .
 ```
 
 ## 1. Upload code and data (from your machine, VPN on)
@@ -40,10 +40,10 @@ scp <user>@apolo.eafit.edu.co:~/apolo_report.txt .
 ```bash
 # code (no venv, data or runs)
 rsync -avP --exclude .venv --exclude data --exclude runs --exclude wheelhouse \
-    ./ <user>@apolo.eafit.edu.co:~/dloct-thesis/
+    ./ ugr-jcospinav@apolo-3.eafit.edu.co:~/dloct-thesis/
 
 # raw real tomograms only; --partial lets an interrupted transfer resume
-rsync -avP --partial /path/to/dataset/phase/ <user>@apolo.eafit.edu.co:~/dloct/raw/phase/
+rsync -avP --partial /path/to/dataset/phase/ ugr-jcospinav@apolo-3.eafit.edu.co:~/dloct/raw/phase/
 ```
 
 If the login node has internet, `git clone` of the repo works instead of the first rsync.
@@ -62,7 +62,7 @@ bash scripts/setup_cluster.sh
 
   ```bash
   bash scripts/build_wheelhouse.sh                                   # local, ~3 GB
-  rsync -avP wheelhouse <user>@apolo.eafit.edu.co:~/dloct-thesis/
+  rsync -avP wheelhouse ugr-jcospinav@apolo-3.eafit.edu.co:~/dloct-thesis/
   ```
 
 Check the GPU and driver once:
@@ -96,4 +96,4 @@ sbatch scripts/eval.slurm runs/unet_full                   # after training
 
 - If a job hits its time limit, resubmit the same command. It resumes from `runs/<name>/latest.pt`.
 - The node has 2 GPUs. Two jobs of `--gres=gpu:2` run one after the other; to run two experiments at once, submit each with `sbatch --gres=gpu:1 ...`.
-- Copy results back with `rsync -avP <user>@apolo.eafit.edu.co:~/dloct-thesis/runs/ ./runs/`.
+- Copy results back with `rsync -avP ugr-jcospinav@apolo-3.eafit.edu.co:~/dloct-thesis/runs/ ./runs/`.
