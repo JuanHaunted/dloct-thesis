@@ -31,6 +31,24 @@ keep every K-th A-line (K=2, no anti-alias filter), sinc-interpolate back to the
 | Per-sample balanced patch sampling | Four ~1000-B-scan volumes would otherwise dominate training |
 | Phase metrics at ≥ 10 dB above noise floor | A fixed −30 dB mask counted 88% of fovea pixels (mostly noise) as tissue |
 
+## Statistical methodology (from 2026-09-25)
+
+- Per-B-scan metrics, paired across methods by (volume, B-scan index).
+- **Two 95% bootstrap CIs:** over B-scans (optimistic, since neighbouring B-scans are correlated)
+  and over volumes (per-volume means resampled; honest but wide with 6 test volumes). A/B channels of
+  one sample are still correlated with each other, so even the volume CI is somewhat optimistic.
+- **Significance:** paired two-sided Wilcoxon signed-rank tests, Holm–Bonferroni-corrected across
+  the tested metrics. They are run over B-scan pairs and over per-volume means. The volume-level
+  test is conservative: with 6 volumes the smallest possible p is 0.031, so after Holm correction it
+  cannot reach 0.05. Report it as descriptive.
+- **Pre-registered decision rule** for "model B is better than model A" (`dloct.compare`): B
+  improves the main metric (tissue PSNR), no phase metric (WPC, CCC, PG-SSIM) degrades by more than
+  5%, and WPC or CCC improves with Holm-adjusted p < 0.05.
+- **Extra diagnostics:** HistSim (amplitude histogram similarity), phase coherence by amplitude
+  decile, SSIM between output and input (identity-collapse check).
+- The CIs quoted in the `unet_full` test table below are the older B-scan-level ones; re-evaluation
+  will add volume-level CIs and the tests.
+
 ## Data
 
 29 files = 15 samples (A/B channels grouped), from two systems: retina/optic nerve on the
