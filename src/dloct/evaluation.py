@@ -56,7 +56,7 @@ def evaluate(model, dataset, factor, device, snr_db=10.0, amp_dtype=None, keep=0
         recon = reconstruct(model, x, factor, amp_dtype=amp_dtype)
         sample = dataset.vols.volume(name)["group"].split("/", 1)[-1]
         for method, z in recon.items():
-            records.append((sample, method, compute_metrics(z, x, snr_db)))
+            records.append((sample, method, compute_metrics(z, x, snr_db, factor=factor)))
             mps[method].append(lateral_mps(z))
         mps["ground truth"].append(lateral_mps(x))
         if i < keep:

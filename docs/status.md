@@ -65,7 +65,33 @@ B-scans with [95% bootstrap CI]. Phase metrics use pixels ≥ 10 dB above the no
 | phase error, amplitude-weighted [rad] ↓ | 0.385 | **0.345** | −0.040 (−10%) | 99.5% |
 | inter-A-line Δφ error [rad] ↓ | 0.389 | **0.364** | −0.025 (−6%) | 96.9% |
 
-Per sample (best checkpoint), all three improve on every metric:
+**Caveat, found from the before/after figures (2026-09-25): the whole-image PSNR/SSIM above
+are dominated by background noise.** Only 11–40% of pixels are tissue. The model smooths the
+background noise (dB spread 5.8 → ~3 dB), which whole-image PSNR rewards. Split by region, from
+`runs/unet_full/figures/before_after_*.npz`, one B-scan per sample:
+
+| PSNR dB-amp | whole image | tissue | background |
+|---|---|---|---|
+| Fovea5 | 19.36 → 21.67 | 20.26 → 20.70 | 19.24 → 21.85 |
+| OpticNerve4 | 19.22 → 21.52 | 19.95 → 19.53 | 19.13 → 21.84 |
+| Nail | 19.85 → 22.32 | 20.06 → 22.47 | 19.72 → 22.22 |
+
+So for retina the amplitude gain in tissue is ~0 dB; Nail gains in tissue too. **Do not quote
+the whole-image PSNR/SSIM as an amplitude improvement.** The phase metrics are computed in
+tissue and are unaffected.
+
+**Striping artifact:** in tissue, the model's unmeasured A-lines are 5–6 dB too dark (power
+ratio unmeasured/measured 0.32–0.57, vs ground truth ≈ 1.0 and interpolation 0.74–0.95). This is
+conditional-mean shrinkage: where the missing A-line is only partly predictable, the MSE-optimal
+estimate has a smaller magnitude. It is visible as vertical striping in the zoomed amplitude.
+Interpolation shows the same effect more weakly (−3.6 to −3.9 dB). This is the main motivation
+for the adversarial step.
+
+`eval.py` now reports tissue-only PSNR/SSIM (`psnr_db_tissue`, `ssim_db_tissue`), the dB bias on
+unmeasured A-lines (`unmeasured_db_bias`) and their power ratio (`unmeasured_power_ratio`, plus
+`_gt`). `unet_full` should be re-evaluated to get them on the full test set.
+
+Per sample (best checkpoint), all three improve on every phase metric:
 
 | sample | PSNR interp → model | WPC interp → model | CCC interp → model | Δφ err interp → model |
 |---|---|---|---|---|
@@ -97,7 +123,8 @@ Best at step 32.5k. Phase metrics overfit after ~35k steps while amplitude keeps
 - [ ] `cascade_full` training (about 19 h total), then evaluation
 - [ ] `unet_magnitude`, `unet_complex` training and evaluation
 - [ ] Re-run `unet_full` evaluation to get the out-of-band spectral recovery numbers (optional)
-- [ ] Before/after figure for `unet_full` (`scripts/figure_before_after.py`, running on Apolo)
+- [x] Before/after figure for `unet_full`: `runs/unet_full/figures/` (revealed the caveat above)
+- [ ] Re-evaluate `unet_full` with the tissue and unmeasured-line metrics
 
 ### Next architecture (decided 2026-09-25)
 

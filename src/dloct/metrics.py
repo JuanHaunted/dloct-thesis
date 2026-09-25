@@ -50,8 +50,13 @@ def to_db_image(x, dyn_range_db: float = 50.0):
     return ((db + dyn_range_db) / dyn_range_db).clamp(0, 1)
 
 
-def psnr(a, b):
-    mse = ((a - b) ** 2).mean(dim=(-2, -1))
+def psnr(a, b, mask=None):
+    """PSNR of [0, 1] images (B, H, W), optionally over a boolean mask only."""
+    if mask is None:
+        mse = ((a - b) ** 2).mean(dim=(-2, -1))
+    else:
+        m = mask.float()
+        mse = (((a - b) ** 2) * m).sum(dim=(-2, -1)) / (m.sum(dim=(-2, -1)) + _EPS)
     return (10 * torch.log10(1.0 / (mse + _EPS))).mean()
 
 
@@ -109,8 +114,12 @@ def phase_consistency_metrics(x_hat, x):
 
 
 @torch.no_grad()
-def compute_metrics(x_hat, x, snr_db: float = 10.0, local_window: int = 5):
-    """Returns a dict of floats. ``x_hat`` and ``x`` are complex (B, H, W)."""
+def compute_metrics(x_hat, x, snr_db: float = 10.0, local_window: int = 5, factor: int | None = None,
+                    offset: int = 0):
+    """
+    Returns a dict of floats. ``x_hat`` and ``x`` are complex (B, H, W). With ``factor`` (and
+    ``offset``) it also reports amplitude fidelity on the unmeasured A-lines in tissue.
+    """
     x_hat, x = x_hat.to(torch.complex64), x.to(torch.complex64)
     mask = tissue_mask(x, snr_db).float()
     out_mask = {"mask_fraction": mask.mean().item()}
@@ -120,6 +129,21 @@ def compute_metrics(x_hat, x, snr_db: float = 10.0, local_window: int = 5):
     a_hat, a = to_db_image(x_hat), to_db_image(x)
     out["psnr_db"] = psnr(a_hat, a).item()
     out["ssim_db"] = ssim(a_hat, a).item()
+    # Whole-image dB metrics are dominated by background noise (most pixels): report tissue too.
+    out["psnr_db_tissue"] = psnr(a_hat, a, mask.bool()).item()
+    out["ssim_db_tissue"] = ssim(a_hat, a, mask=mask.bool()).item()
+    if factor and factor > 1:
+        # Amplitude on the unmeasured A-lines in tissue: a mean dB bias below 0 and a power
+        # ratio (unmeasured / measured) below the ground truth's mean the fill-in is too dark,
+        # which shows as vertical striping.
+        cols = torch.arange(x.shape[-1], device=x.device)
+        missing = ((cols - offset) % factor != 0)[None, None, :] & mask.bool()
+        measured = ((cols - offset) % factor == 0)[None, None, :] & mask.bool()
+        db = lambda z: 20 * torch.log10(z.abs() + _EPS)
+        out["unmeasured_db_bias"] = ((db(x_hat) - db(x))[missing]).mean().item()
+        power = lambda z, m: (z.abs() ** 2)[m].mean()
+        out["unmeasured_power_ratio"] = (power(x_hat, missing) / (power(x_hat, measured) + _EPS)).item()
+        out["unmeasured_power_ratio_gt"] = (power(x, missing) / (power(x, measured) + _EPS)).item()
 
     # Complex field.
     out["nrmse"] = ((x_hat - x).abs().pow(2).sum() / (x.abs().pow(2).sum() + _EPS)).sqrt().item()
