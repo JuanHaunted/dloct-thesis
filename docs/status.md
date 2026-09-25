@@ -1,6 +1,6 @@
 # Project status
 
-_Maintained by the programming agent. Last updated 2026-09-25 (unet_full test results)._
+_Maintained by the programming agent. Last updated 2026-09-25 (final unet_full test evaluation)._
 
 ## Problem and approach
 
@@ -65,36 +65,56 @@ ophthalmic SS-OCT, and the other tissues on the benchtop system.
 
 | Split | Samples |
 |---|---|
-| train | ChickenBreast, Fovea1–3, OpticNerve1–2, OpticNerveNew, OpticNerveOld, S.Eye2, unpairCadaverhearth |
+| train | ChickenBreast, Fovea1–3, OpticNerve1–2, OpticNerveNew, OpticNerveOld, S.Eye2, unpairCadaverhearth (10 samples, 19 volumes) |
 | val | Fovea4, OpticNerve3 |
-| test | Fovea5, OpticNerve4, Nail (Nail = tissue type unseen in training) |
+| test | Fovea5, OpticNerve4, Nail (Nail = tissue type unseen in training); 5 volumes (Fovea5B is a duplicate, excluded) |
 
 Per-volume coherence diagnostics are in `meta.json` on the cluster and summarized in
 `docs/data_findings.md` (local sample only).
 
 ## Results
 
-### `unet_full`: test set, corrected for the duplicate (5 volumes, 160 B-scans)
+### `unet_full`: final test evaluation (authoritative)
 
-Reconstructed from `runs/unet_full/eval_test_best_snr10/metrics.json` (records in fixed order),
-excluding Fovea5B. Brackets are **volume-level** 95% bootstrap CIs. Paired Wilcoxon tests over
-B-scans, Holm-corrected across 9 metrics: p = 4.7e-27 for all. The volume-level test gives
-p = 0.56; with 5 volumes it cannot go below 0.0625, so it is descriptive only.
+Source: `runs/unet_full/eval_test_best_snr10/metrics.md` (best checkpoint, step 32.5k; duplicates
+excluded; 5 volumes, 160 B-scans, 32 per volume). Brackets are **volume-level** 95% bootstrap CIs.
+Paired Wilcoxon over B-scans, Holm-corrected across 11 metrics: p ≤ 5.5e-21 for every metric.
+The volume-level test gives p = 0.69; with 5 volumes it cannot go below 0.0625, so it is descriptive.
 
-| metric | interpolation | unet_full (best) | Δ [95% CI by volume] | B-scans improved |
+| metric | interpolation | unet_full | Δ [95% CI by volume] | B-scans improved |
 |---|---:|---:|---:|---:|
+| **Phase** | | | | |
 | WPC ↑ | 0.790 [0.769, 0.810] | 0.833 [0.817, 0.848] | +0.043 [+0.038, +0.048] | 100% |
 | CCC ↑ | 0.740 [0.726, 0.755] | 0.790 [0.776, 0.803] | +0.049 [+0.048, +0.051] | 100% |
 | PG-SSIM ↑ | 0.200 | 0.212 | +0.013 [+0.011, +0.015] | 98% |
 | phase error, amplitude-weighted [rad] ↓ | 0.394 | 0.356 | −0.038 [−0.044, −0.033] | 99% |
 | inter-A-line Δφ error [rad] ↓ | 0.408 | 0.385 | −0.023 [−0.028, −0.019] | 96% |
-| complex NRMSE ↓ | 0.754 | 0.641 | −0.113 | 100% |
-| \|ρ\| local ↑ | 0.707 | 0.752 | +0.045 | 100% |
-| PSNR, whole image (background-dominated, see caveat) | 19.58 | 22.04 | +2.46 | 100% |
-| out-of-band energy recovered (lateral MPS) | 0.000 | 0.274 | | |
-| out-of-band / in-band spectral error [dB] | 52.9 / 1.59 | 6.3 / 0.75 | | |
+| **Complex field** | | | | |
+| complex NRMSE ↓ | 0.754 | 0.641 | −0.113 [−0.121, −0.105] | 100% |
+| \|ρ\| local ↑ | 0.707 | 0.752 | +0.045 [+0.044, +0.047] | 100% |
+| **Amplitude, tissue only** | | | | |
+| PSNR tissue ↑ | 20.13 [19.90, 20.36] | 21.19 [20.05, 22.33] | +1.06 [+0.10, +2.03] | 87% |
+| SSIM tissue ↑ | 0.572 | 0.670 | +0.098 [+0.083, +0.114] | 100% |
+| **Realism / artifacts** | | | | |
+| HistSim (amplitude histogram) ↑ | 0.9996 | 0.854 | −0.146 [−0.185, −0.117] | 0% (worse) |
+| unmeasured A-line bias [dB] (→ 0) | −3.22 | −4.71 | \|bias\| +1.50 (worse) | 0% |
+| unmeasured/measured power (GT 1.007) | 0.790 | 0.425 | | |
+| SSIM output vs input (identity check) | 1.000 | 0.699 | not collapsed to identity | |
+| **Spectrum** | | | | |
+| out-of-band energy recovered | 0.000 | 0.270 | | |
+| out-of-band / in-band spectral error [dB] | 52.7 / 1.60 | 6.4 / 0.75 | | |
 
-Tissue-only amplitude and striping metrics need the re-evaluation (the previous one ran older code).
+Per sample, tissue PSNR interpolation → model: Fovea5 20.44 → 20.88 (+0.4), Nail 20.26 → 22.69
+(+2.4), OpticNerve4 19.84 → 19.85 (+0.0). Phase metrics improve on all three (e.g. WPC 0.796 → 0.841,
+0.813 → 0.849, 0.764 → 0.812).
+
+Phase coherence by amplitude decile: the gain grows with signal strength, from +0.003 in d1
+(noise) to +0.025 in d10 (brightest tissue). Phase is recovered where the signal supports it.
+
+**Interpretation:** a consistent, significant phase and complex-field gain on every sample. The
+amplitude gain in tissue is sample-dependent: large for Nail, ~0 for the retina. Realism gets worse:
+the unmeasured A-lines are darker than interpolation's (striping) and the background noise is
+smoothed (HistSim 0.85). This is the conditional-mean behaviour that the adversarial step targets.
 
 ### `unet_full`: test set, original table (6 volumes, Fovea5 counted twice; superseded)
 
