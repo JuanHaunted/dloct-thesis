@@ -61,12 +61,20 @@ class TrainPatches(Dataset):
     """
 
     def __init__(self, root, patch=(256, 256), length=10 ** 7, seed=0, rank=0,
-                 min_energy=1e-3, tries=8, divisor=16, sources=None):
+                 min_energy=1e-3, tries=8, divisor=16, sources=None, balance="sample"):
         self.vols = PreparedVolumes(root)
         self.ranges = self.vols.ranges("train", sources)
         if not self.ranges:
             raise ValueError("empty train split")
         sizes = np.array([e - s for _, s, e in self.ranges], dtype=np.float64)
+        if balance == "sample":
+            # Every sample (all its channels together) is drawn equally often, whatever its
+            # number of B-scans, so a few very large volumes do not dominate training.
+            groups = [self.vols.volume(name)["group"] for name, _, _ in self.ranges]
+            per_group = {g: sizes[[h == g for h in groups]].sum() for g in set(groups)}
+            sizes = np.array([s / per_group[g] for s, g in zip(sizes, groups)])
+        elif balance != "bscan":
+            raise ValueError(f"balance must be 'sample' or 'bscan', got {balance!r}")
         self.weights = sizes / sizes.sum()
         self.patch = patch
         self.length = length

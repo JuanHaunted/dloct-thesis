@@ -110,7 +110,7 @@ def main():
 
     train_ds = TrainPatches(dcfg["root"], patch=tuple(dcfg["patch"]), seed=cfg["seed"] + step,
                             rank=rank, min_energy=dcfg["min_energy"], divisor=divisor,
-                            sources=dcfg.get("sources"))
+                            sources=dcfg.get("sources"), balance=dcfg.get("balance", "sample"))
     loader = DataLoader(train_ds, batch_size=dcfg["batch_size"], num_workers=dcfg["num_workers"],
                         pin_memory=True, drop_last=True, persistent_workers=dcfg["num_workers"] > 0)
     val_ds = EvalBScans(dcfg["root"], "val", per_volume=dcfg["val_per_volume"], divisor=divisor,
