@@ -27,7 +27,8 @@ from pathlib import Path
 import numpy as np
 
 _POL = re.compile(r"polInt\d+_polOut\d+_?", re.IGNORECASE)
-_CHANNEL = re.compile(r"(?<=[0-9a-z])[AB]$")
+# Detection channel letter A/B, at the end ("Fovea1A") or before a New/Old tag ("OpticNerveANew").
+_CHANNEL = re.compile(r"(?<=[0-9a-z])[AB](?=(?:New|Old)?$)")
 
 
 def group_of(source: str, stem: str) -> str:
