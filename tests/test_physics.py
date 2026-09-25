@@ -107,3 +107,16 @@ def test_distinct_samples_keep_distinct_groups():
     from dloct.prepare_data import group_of
     names = ["OpticNerve3A", "OpticNerve4A", "OpticNerveANew", "OpticNerveAOld", "unpairCadaverhearth", "ChickenBreastA"]
     assert len({group_of("phase", n) for n in names}) == len(names)
+
+
+def test_phase_consistency_metrics_bounds_and_invariance():
+    from dloct.metrics import phase_consistency_metrics
+    x = rand_complex(1, 64, 64).to(torch.complex64)
+    perfect = phase_consistency_metrics(x, x)
+    assert all(abs(perfect[k] - 1) < 1e-4 for k in ("wpc", "ccc", "pg_ssim"))
+    # CCC and PG-SSIM ignore a global phase offset; WPC does not (cos of the offset).
+    rot = phase_consistency_metrics(x * torch.exp(torch.tensor(0.7j)).to(torch.complex64), x)
+    assert abs(rot["ccc"] - 1) < 1e-4 and abs(rot["pg_ssim"] - 1) < 1e-4
+    assert abs(rot["wpc"] - math.cos(0.7)) < 1e-4
+    noise = phase_consistency_metrics(rand_complex(1, 64, 64, seed=5).to(torch.complex64), x)
+    assert abs(noise["wpc"]) < 0.1 and noise["ccc"] < 0.1
