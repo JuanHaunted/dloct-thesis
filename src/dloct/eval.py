@@ -24,8 +24,12 @@ from .sampling_analysis import compute_spectral_halfwidth
 from .visualize import comparison_figure, mps_figure
 
 AMPLITUDE_COLUMNS = [
-    ("psnr_db", "PSNR dB-amp ↑"), ("ssim_db", "SSIM dB-amp ↑"), ("nrmse", "cNRMSE ↓"),
-    ("rho_global", "\\|ρ\\| ↑"), ("rho_local", "\\|ρ\\| local ↑"),
+    ("psnr_db_tissue", "PSNR tissue ↑"), ("ssim_db_tissue", "SSIM tissue ↑"),
+    ("psnr_db", "PSNR image ↑"), ("ssim_db", "SSIM image ↑"),
+    ("unmeasured_db_bias", "unmeasured bias [dB] →0"), ("unmeasured_power_ratio", "unmeasured/measured power"),
+]
+COMPLEX_COLUMNS = [
+    ("nrmse", "cNRMSE ↓"), ("rho_global", "\\|ρ\\| ↑"), ("rho_local", "\\|ρ\\| local ↑"),
 ]
 PHASE_COLUMNS = [
     ("wpc", "WPC ↑"), ("ccc", "CCC ↑"), ("pg_ssim", "PG-SSIM ↑"),
@@ -116,10 +120,15 @@ def main():
     md = [f"# {cfg['name']} — {args.split} (K={K}, {len(ds)} B-scans, step {ck['step']}, {args.ckpt}, "
           f"phase metrics at SNR >= {args.snr_db:g} dB, {summary['interpolation']['mask_fraction']:.0%} of pixels)",
           "", "Mean over B-scans [95% bootstrap CI].", "",
-          "## All: amplitude and complex field", "", markdown_table(summary, AMPLITUDE_COLUMNS, ci),
+          "Amplitude in dB. 'tissue' = pixels ≥ SNR threshold above the noise floor; 'image' = all",
+          "pixels, dominated by background noise. Ground-truth unmeasured/measured power ≈ "
+          f"{summary['interpolation'].get('unmeasured_power_ratio_gt', float('nan')):.3f}.", "",
+          "## All: amplitude", "", markdown_table(summary, AMPLITUDE_COLUMNS, ci),
+          "", "## All: complex field", "", markdown_table(summary, COMPLEX_COLUMNS, ci),
           "", "## All: phase", "", markdown_table(summary, PHASE_COLUMNS, ci)]
     for sample, s in sorted(per_sample.items()):
-        md += ["", f"## {sample}", "", markdown_table(s, AMPLITUDE_COLUMNS), "", markdown_table(s, PHASE_COLUMNS)]
+        md += ["", f"## {sample}", "", markdown_table(s, AMPLITUDE_COLUMNS), "",
+               markdown_table(s, COMPLEX_COLUMNS), "", markdown_table(s, PHASE_COLUMNS)]
     md += ["", "## Lateral spectrum", "",
            "Out-of-band = |f| > 1/(2K), the band the measurement cannot contain. Recovered energy is",
            "relative to the ground truth (1 = fully restored). Spectral error is the mean |ΔdB| of",
