@@ -20,6 +20,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -73,6 +74,15 @@ def lateral_diagnostics(vol: np.ndarray, n_bscans: int = 16) -> dict:
     for k in (2, 4):
         out[f"inband_energy_K{k}"] = float(s[np.abs(f) < 0.5 / k].sum() / s.sum())
     return out
+
+
+def file_hash(path: Path, chunk: int = 1 << 24) -> str:
+    """SHA-1 of a file's bytes; identical hashes mean byte-identical (duplicate) volumes."""
+    h = hashlib.sha1()
+    with open(path, "rb") as f:
+        while block := f.read(chunk):
+            h.update(block)
+    return h.hexdigest()
 
 
 def load_complex(path: Path, layout: str) -> np.ndarray:
@@ -168,7 +178,19 @@ def main():
     files = sorted(src.rglob("*.npy"))
     if not files:
         raise SystemExit(f"no .npy files under {src}")
+    # Byte-identical files (e.g. an A/B channel that is a copy of the other) are kept out of every
+    # split: counting them twice inflates the effective number of test volumes.
+    first_of, duplicates = {}, {}
     for path in files:
+        digest = file_hash(path)
+        if digest in first_of:
+            duplicates[path] = first_of[digest]
+            print(f"DUPLICATE: {path.name} is byte-identical to {first_of[digest].name}; excluded")
+        else:
+            first_of[digest] = path
+    for path in files:
+        if path in duplicates:
+            continue
         source = path.parent.relative_to(src).as_posix() or "."
         name = f"{source}__{path.stem}".replace("/", "__").lstrip("._")
         if name in volumes and (out / f"{name}.npy").exists() and not args.overwrite:
@@ -194,7 +216,12 @@ def main():
     # change to the grouping rule takes effect without re-converting the data.
     for v in volumes.values():
         v["group"] = group_of(v["source"], Path(v["file"]).stem)
-    meta = dict(volumes=volumes, splits=assign_splits(volumes, args.split_file), layout="YZX complex64")
+    dup_names = {str(p) for p in duplicates}
+    for name in [n for n, v in volumes.items() if v["file"] in dup_names]:
+        print(f"removing previously prepared duplicate {name} from the splits")
+        volumes.pop(name)
+    meta = dict(volumes=volumes, splits=assign_splits(volumes, args.split_file), layout="YZX complex64",
+                duplicates={str(p): str(q) for p, q in duplicates.items()})
     meta_path.write_text(json.dumps(meta, indent=2))
     for split, ranges in meta["splits"].items():
         n = sum(e - s for _, s, e in ranges)

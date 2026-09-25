@@ -6,7 +6,8 @@ For every ``*.npy`` under the given directory:
     downloads),
   * the layout is ``(Z, X, Y)`` complex or ``(Z, X, Y, 2)`` real,
   * a few B-scans (first, middle, last) are finite and not all zero,
-and every A/B channel pair has matching shape and dtype. Read-only.
+and every A/B channel pair has matching shape and dtype; byte-identical files are listed.
+Read-only.
 
     python scripts/check_data.py ~/dloct/raw/phase [--expect 29]
 """
@@ -18,7 +19,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from dloct.prepare_data import group_of  # noqa: E402
+from dloct.prepare_data import file_hash, group_of  # noqa: E402
 
 
 def check(path: Path):
@@ -78,6 +79,14 @@ def main():
         same = len({shapes[m] for m in members}) == 1
         ok &= same
         print(f"  {g.split('/', 1)[1]:22s} {', '.join(sorted(members))}{'' if same else '   <-- A/B shapes differ'}")
+
+    hashes = {}
+    for f in files:
+        hashes.setdefault(file_hash(f), []).append(f.name)
+    dups = [names for names in hashes.values() if len(names) > 1]
+    print(f"\nbyte-identical duplicates: {len(dups)}")
+    for names in dups:
+        print(f"  {' == '.join(names)}   <-- duplicate (prepare_data keeps only the first)")
 
     if args.expect is not None and len(files) != args.expect:
         ok = False
