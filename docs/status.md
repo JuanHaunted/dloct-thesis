@@ -195,12 +195,28 @@ Best at step 32.5k. Phase metrics overfit after ~35k steps while amplitude keeps
 - [x] Before/after figure for `unet_full`: `runs/unet_full/figures/` (revealed the caveat above)
 - [ ] Re-evaluate `unet_full` with the tissue and unmeasured-line metrics
 
-### Next architecture (decided 2026-09-25)
+### Adversarial step (implemented 2026-09-25, smoke-tested locally)
 
-Adversarial training (a discriminator for realistic speckle) on top of **both** `unet_full` and
-`cascade_full`, compared against those same networks without it. It will be implemented after the
-`unet_full` before/after figure is reviewed, and launched after the cascade results.
-`unet_phase2` (phase terms ×2, 40k steps) is on hold. A K=4 run is possible next week.
+All runs fine-tune a trained model from its EMA weights for **20k steps** (lr 5e-5, same losses),
+so the comparison is "same network, same start, one change". Final (`latest`) checkpoints are
+evaluated for all fine-tunes, to avoid checkpoint-selection bias.
+
+| Run | Starts from | Change | Answers |
+|---|---|---|---|
+| `unet_ft` | unet_full | none (control) | is any gain just more training? |
+| `unet_gan` | unet_full | conditional PatchGAN on dB amplitude, hinge loss, weight 0.01 | does a speckle-realism discriminator help? |
+| `unet_power` | unet_full | power-match loss on unmeasured A-lines (0.1) | is it just brightness correction? |
+| `cascade_ft` | cascade_full | none (control) | as above, for the cascade |
+| `cascade_gan` | cascade_full | same discriminator | as above, for the cascade |
+
+- **Discriminator** (`src/dloct/models/discriminator.py`): 3-layer PatchGAN with spectral norm
+  (2.8M parameters). It is conditioned on the measurement and the measured-A-line mask. Input is
+  dB amplitude only, so phase stays under the physics-aware losses; a `logphasor` mode also exists.
+- **Hypotheses**, from the realism diagnostics of unet_full: GAN > ft on `hist_sim`,
+  `unmeasured_power_ratio` (→ ~1.0), `unmeasured_db_bias` (→ 0) and out-of-band spectral
+  recovery, with no phase metric degrading by more than 5%.
+- **Decision rule**, main metric tissue PSNR: `python -m dloct.compare --ref <ft eval> --cand <gan eval>`.
+- The adversarial weight 0.01 is a first guess. Refine after the cascade and the first GAN run.
 
 ## Open questions
 

@@ -8,6 +8,13 @@ Overrides:    ... --set optim.steps=2000 data.batch_size=4
 Outputs go to ``<out_dir>/<name>/``: ``config.yaml``, ``log.jsonl``, ``latest.pt``, ``best.pt``
 and ``previews/``. If ``latest.pt`` exists the run resumes from it, so a SLURM job that hits
 its time limit can simply be resubmitted.
+
+Fine-tuning: ``train.init_from: runs/<other>/best.pt`` starts the network (and its EMA) from
+another run's EMA weights, with a fresh optimizer and schedule.
+
+Adversarial training: an ``adv`` section (``weight``, ``mode``, ``lr``, ``start_step``, ``base``,
+``n_layers``) adds a conditional PatchGAN discriminator (``models/discriminator.py``) trained with
+the hinge loss; the generator loss gains ``weight · (−D(x̂))``.
 """
 
 import argparse
@@ -30,6 +37,7 @@ from .config import load_config
 from .data import EvalBScans, TrainPatches
 from .evaluation import amp_dtype, evaluate
 from .losses import ReconLoss
+from .models.discriminator import PatchDiscriminator, d_hinge_loss, g_hinge_loss
 from .models.reconstructors import build_model
 from .physics import measure
 from .visualize import comparison_figure
@@ -90,6 +98,13 @@ def main():
     dtype = amp_dtype(tcfg.get("precision", "auto"))
     scaler = torch.amp.GradScaler("cuda", enabled=dtype == torch.float16)
 
+    acfg = cfg.get("adv") or {}
+    use_adv = bool(acfg) and acfg.get("weight", 0) > 0
+    if use_adv:
+        disc = PatchDiscriminator(acfg.get("mode", "amplitude"), acfg.get("base", 64), acfg.get("n_layers", 3)).to(device)
+        opt_d = torch.optim.Adam(disc.parameters(), lr=acfg.get("lr", 1e-4), betas=(0.5, 0.999))
+        scaler_d = torch.amp.GradScaler("cuda", enabled=dtype == torch.float16)
+
     step, best = 0, None
     ckpt_path = run_dir / "latest.pt"
     if ckpt_path.exists():
@@ -100,11 +115,23 @@ def main():
         ema.load_state_dict(ck["ema"])
         opt.load_state_dict(ck["opt"])
         sched.load_state_dict(ck["sched"])
+        if use_adv and "disc" in ck:
+            disc.load_state_dict(ck["disc"])
+            opt_d.load_state_dict(ck["opt_d"])
+            scaler_d.load_state_dict(ck["scaler_d"])
         step, best = ck["step"], ck.get("best")
         if is_main:
             print(f"resumed from {ckpt_path} at step {step}")
+    elif tcfg.get("init_from"):
+        src = torch.load(tcfg["init_from"], map_location=device, weights_only=False)
+        weights = {k.removeprefix("module."): v for k, v in src["ema"].items() if k != "n_averaged"}
+        model.load_state_dict(weights)
+        ema = AveragedModel(model, multi_avg_fn=get_ema_multi_avg_fn(ocfg["ema"]))
+        if is_main:
+            print(f"initialized from {tcfg['init_from']} (EMA weights, step {src['step']})")
 
     train_model = DDP(model, device_ids=[device.index]) if world > 1 else model
+    train_disc = (DDP(disc, device_ids=[device.index]) if world > 1 else disc) if use_adv else None
     if tcfg.get("compile"):
         train_model = torch.compile(train_model)
 
@@ -118,11 +145,15 @@ def main():
 
     if is_main:
         print(f"model={cfg['model']['type']} params={n_params / 1e6:.2f}M world={world} "
-              f"train_ranges={len(train_ds.ranges)} val_bscans={len(val_ds)} K={K} amp={dtype}")
+              f"train_ranges={len(train_ds.ranges)} val_bscans={len(val_ds)} K={K} amp={dtype}"
+              + (f" adv={acfg}" if use_adv else ""))
 
     def save(path):
-        torch.save(dict(model=model.state_dict(), ema=ema.state_dict(), opt=opt.state_dict(),
-                        sched=sched.state_dict(), scaler=scaler.state_dict(), step=step, best=best, cfg=cfg), path)
+        state = dict(model=model.state_dict(), ema=ema.state_dict(), opt=opt.state_dict(),
+                     sched=sched.state_dict(), scaler=scaler.state_dict(), step=step, best=best, cfg=cfg)
+        if use_adv:
+            state.update(disc=disc.state_dict(), opt_d=opt_d.state_dict(), scaler_d=scaler_d.state_dict())
+        torch.save(state, path)
 
     def log(record):
         with open(run_dir / "log.jsonl", "a") as f:
@@ -155,9 +186,20 @@ def main():
         x = next(it).to(device, non_blocking=True)
         offset = int(rng.integers(K))
         x_meas = measure(x, K, offset)
-        with torch.autocast("cuda", dtype=dtype or torch.float32, enabled=dtype is not None):
+        autocast = torch.autocast("cuda", dtype=dtype or torch.float32, enabled=dtype is not None)
+        with autocast:
             x_hat = train_model(x_meas, K, offset)
-        loss, terms = loss_fn(x_hat.to(torch.complex64), x, step)
+        x_hat = x_hat.to(torch.complex64)
+        loss, terms = loss_fn(x_hat, x, step, factor=K, offset=offset)
+        adv_on = use_adv and step >= acfg.get("start_step", 0)
+        if adv_on:
+            # Generator side: the discriminator is frozen and used unwrapped (no DDP sync needed).
+            disc.requires_grad_(False)
+            with autocast:
+                g_adv = g_hinge_loss(disc(x_hat, x_meas, K, offset).float())
+            disc.requires_grad_(True)
+            loss = loss + acfg["weight"] * g_adv
+            terms["g_adv"] = g_adv.detach()
 
         opt.zero_grad(set_to_none=True)
         scaler.scale(loss).backward()
@@ -167,6 +209,19 @@ def main():
         scaler.update()
         sched.step()
         ema.update_parameters(model)
+
+        if adv_on:
+            # Discriminator side: ground truth is real, the (detached) reconstruction is fake.
+            # One forward over both halves, as DDP requires a single forward per backward.
+            with autocast:
+                logits = train_disc(torch.cat([x, x_hat.detach()]), torch.cat([x_meas, x_meas]), K, offset).float()
+                real, fake = logits.chunk(2)
+                d_loss = d_hinge_loss(real, fake)
+            opt_d.zero_grad(set_to_none=True)
+            scaler_d.scale(d_loss).backward()
+            scaler_d.step(opt_d)
+            scaler_d.update()
+            terms.update(d_loss=d_loss.detach(), d_real=real.mean().detach(), d_fake=fake.mean().detach())
         step += 1
         seen += x.shape[0] * world
 

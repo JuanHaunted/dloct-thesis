@@ -1,0 +1,6 @@
+# Control: continue cascade_full for 20k steps without a discriminator.
+defaults: cascade_full.yaml
+name: cascade_ft
+loss: {warmup_steps: 0}
+optim: {lr: 5.0e-5, warmup_steps: 500, steps: 20000}
+train: {init_from: runs/cascade_full/best.pt, val_every: 2000, ckpt_every: 2000}

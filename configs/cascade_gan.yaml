@@ -1,0 +1,4 @@
+# Adversarial fine-tuning of cascade_full (same discriminator and schedule as unet_gan).
+defaults: cascade_ft.yaml
+name: cascade_gan
+adv: {weight: 0.01, mode: amplitude, lr: 1.0e-4, start_step: 0, base: 64, n_layers: 3}

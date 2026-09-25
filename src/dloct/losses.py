@@ -38,6 +38,22 @@ def log_magnitude(x_hat, x, floor: float = 1e-2):
     return (torch.log(amp_hat + floor) - torch.log(x.abs() + floor)).abs().mean()
 
 
+def power_match(x_hat, x, factor: int = 2, offset: int = 0, window=(9, 5), floor: float = 1e-4):
+    """
+    Local power on the unmeasured A-lines must match the ground truth: L1 between log box-averaged
+    |·|² maps computed on the unmeasured columns only (so measured columns cannot mask a deficit).
+    Targets the conditional-mean shrinkage (dark fill-in, vertical striping) without asking for any
+    particular speckle realization. Non-adversarial control for the discriminator.
+    """
+    cols = torch.arange(x.shape[-1], device=x.device)
+    missing = ((cols - offset) % factor) != 0
+    p_hat = (x_hat.real ** 2 + x_hat.imag ** 2)[..., missing].unsqueeze(1)
+    p = (x.abs() ** 2)[..., missing].unsqueeze(1)
+    pad = (window[0] // 2, window[1] // 2)
+    box = lambda v: F.avg_pool2d(v, window, stride=1, padding=pad, count_include_pad=False)
+    return (torch.log(box(p_hat) + floor) - torch.log(box(p) + floor)).abs().mean()
+
+
 def _cos_dphi(a, b):
     """cos of the phase difference between a and b, computed without atan2."""
     return (a * b.conj()).real / (a.abs() * b.abs() + _DELTA)
@@ -78,21 +94,22 @@ def lateral_spectrum_l1(x_hat, x):
 
 class ReconLoss(torch.nn.Module):
     """
-    L = w_c·L_c + w_mag·L_mag + w_logmag·L_logmag + w_phase·L_φ + w_dphase·L_Δφ + w_fft·L_F.
+    L = w_c·L_c + w_mag·L_mag + w_logmag·L_logmag + w_phase·L_φ + w_dphase·L_Δφ + w_fft·L_F
+        + w_power·L_power (needs ``factor``/``offset`` at call time).
 
     ``warmup_steps`` linearly ramps the two phase terms from 0 so they do not dominate
     before the amplitude is roughly right.
     """
 
     def __init__(self, charbonnier=1.0, magnitude=0.0, log_magnitude=0.0, phase=0.1, dphase=0.1,
-                 fft=0.01, eps=1e-3, warmup_steps=0):
+                 fft=0.01, power_match=0.0, eps=1e-3, warmup_steps=0):
         super().__init__()
         self.w = dict(charbonnier=charbonnier, magnitude=magnitude, log_magnitude=log_magnitude,
-                      phase=phase, dphase=dphase, fft=fft)
+                      phase=phase, dphase=dphase, fft=fft, power_match=power_match)
         self.eps = eps
         self.warmup_steps = warmup_steps
 
-    def forward(self, x_hat, x, step: int = 0):
+    def forward(self, x_hat, x, step: int = 0, factor: int = 2, offset: int = 0):
         ramp = min(1.0, step / self.warmup_steps) if self.warmup_steps else 1.0
         terms = {}
         if self.w["charbonnier"]:
@@ -107,6 +124,8 @@ class ReconLoss(torch.nn.Module):
             terms["dphase"] = phase_difference(x_hat, x)
         if self.w["fft"]:
             terms["fft"] = lateral_spectrum_l1(x_hat, x)
+        if self.w["power_match"]:
+            terms["power_match"] = power_match(x_hat, x, factor, offset)
         scale = {"phase": ramp, "dphase": ramp}
         total = sum(self.w[k] * scale.get(k, 1.0) * v for k, v in terms.items())
         return total, {k: v.detach() for k, v in terms.items()}

@@ -1,0 +1,5 @@
+# Non-adversarial control: unet_ft plus a loss matching local power on the unmeasured A-lines.
+# If unet_gan beats this, the gain is more than brightness correction.
+defaults: unet_ft.yaml
+name: unet_power
+loss: {power_match: 0.1}
