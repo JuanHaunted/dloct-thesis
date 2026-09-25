@@ -1,0 +1,7 @@
+# Iteration 2 of Model A: stronger phase supervision and a shorter run.
+# Changes vs unet_full: both phase terms doubled (0.1 -> 0.2) and 40k steps, because the
+# validation phase metrics of unet_full peaked at ~32.5k and then slowly overfit.
+defaults: base.yaml
+name: unet_phase2
+loss: {phase: 0.2, dphase: 0.2}
+optim: {steps: 40000}
