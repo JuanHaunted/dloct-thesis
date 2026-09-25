@@ -51,6 +51,15 @@ keep every K-th A-line (K=2, no anti-alias filter), sinc-interpolate back to the
 
 ## Data
 
+**Duplicate volume (found 2026-09-25):** `Fovea5A.npy` and `Fovea5B.npy` give byte-for-byte
+identical metrics on every evaluated B-scan, so they hold the same data. The group's own
+evaluation code also excludes a duplicated volume. Consequences:
+- No leakage: both are in the test split, same sample.
+- The test set has **5 distinct volumes**, not 6. Numbers below with "5 volumes" exclude Fovea5B.
+- Training may contain duplicates too. They don't bias sampling (balancing is per sample), but
+  the training set is smaller than it looks. `scripts/check_data.py` now lists byte-identical
+  files, and `prepare_data` excludes them from all splits. This needs checking on Apolo.
+
 29 files = 15 samples (A/B channels grouped), from two systems: retina/optic nerve on the
 ophthalmic SS-OCT, and the other tissues on the benchtop system.
 
@@ -65,7 +74,29 @@ Per-volume coherence diagnostics are in `meta.json` on the cluster and summarize
 
 ## Results
 
-### `unet_full`: test set (Fovea5, OpticNerve4, Nail), final metrics
+### `unet_full`: test set, corrected for the duplicate (5 volumes, 160 B-scans)
+
+Reconstructed from `runs/unet_full/eval_test_best_snr10/metrics.json` (records in fixed order),
+excluding Fovea5B. Brackets are **volume-level** 95% bootstrap CIs. Paired Wilcoxon tests over
+B-scans, Holm-corrected across 9 metrics: p = 4.7e-27 for all. The volume-level test gives
+p = 0.56; with 5 volumes it cannot go below 0.0625, so it is descriptive only.
+
+| metric | interpolation | unet_full (best) | Δ [95% CI by volume] | B-scans improved |
+|---|---:|---:|---:|---:|
+| WPC ↑ | 0.790 [0.769, 0.810] | 0.833 [0.817, 0.848] | +0.043 [+0.038, +0.048] | 100% |
+| CCC ↑ | 0.740 [0.726, 0.755] | 0.790 [0.776, 0.803] | +0.049 [+0.048, +0.051] | 100% |
+| PG-SSIM ↑ | 0.200 | 0.212 | +0.013 [+0.011, +0.015] | 98% |
+| phase error, amplitude-weighted [rad] ↓ | 0.394 | 0.356 | −0.038 [−0.044, −0.033] | 99% |
+| inter-A-line Δφ error [rad] ↓ | 0.408 | 0.385 | −0.023 [−0.028, −0.019] | 96% |
+| complex NRMSE ↓ | 0.754 | 0.641 | −0.113 | 100% |
+| \|ρ\| local ↑ | 0.707 | 0.752 | +0.045 | 100% |
+| PSNR, whole image (background-dominated, see caveat) | 19.58 | 22.04 | +2.46 | 100% |
+| out-of-band energy recovered (lateral MPS) | 0.000 | 0.274 | | |
+| out-of-band / in-band spectral error [dB] | 52.9 / 1.59 | 6.3 / 0.75 | | |
+
+Tissue-only amplitude and striping metrics need the re-evaluation (the previous one ran older code).
+
+### `unet_full`: test set, original table (6 volumes, Fovea5 counted twice; superseded)
 
 Source: `runs/unet_full/eval_test_best_snr10/metrics.md` (best checkpoint, step 32.5k) and
 `eval_test_latest_snr10/` (step 100k). 192 B-scans (64 per sample). Values are means over
