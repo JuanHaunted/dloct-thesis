@@ -14,7 +14,7 @@ data:
   num_workers: 8
   min_energy: 1.0e-3   # reject near-empty patches (mean |x|^2, normalized units)
   val_per_volume: 8    # full B-scans per validation volume
-  tissue_db: -30.0     # phase metrics only where |x| > -30 dB of the P99.9 amplitude
+  snr_db: 10.0         # phase metrics only where |x| is >= 10 dB above the B-scan noise floor
 
 model:
   type: single_shot

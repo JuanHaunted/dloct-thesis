@@ -37,7 +37,7 @@ def lateral_mps(z: torch.Tensor):
 
 
 @torch.no_grad()
-def evaluate(model, dataset, factor, device, tissue_db=-30.0, amp_dtype=None, keep=0):
+def evaluate(model, dataset, factor, device, snr_db=10.0, amp_dtype=None, keep=0):
     """
     Averages metrics over the B-scans of ``dataset`` (an ``EvalBScans``). Returns
     ``(summary, per_source, examples, spectra)``; ``examples`` holds the first ``keep``
@@ -53,7 +53,7 @@ def evaluate(model, dataset, factor, device, tissue_db=-30.0, amp_dtype=None, ke
         recon = reconstruct(model, x, factor, amp_dtype=amp_dtype)
         source = dataset.vols.volume(name)["source"]
         for method, z in recon.items():
-            m = compute_metrics(z, x, tissue_db)
+            m = compute_metrics(z, x, snr_db)
             for key in ("all", source):
                 for k, v in m.items():
                     sums[(key, method)][k] += v

@@ -2,8 +2,8 @@
 Amplitude and phase fidelity metrics (docs/literature_review.md §5).
 
 Inputs are complex tensors (B, H, W), lateral axis last, in normalized units (the per-volume
-99.9th-percentile amplitude is 1). Phase metrics are restricted to a tissue mask
-``|x| > 10^(tissue_db/20)``; speckle phase in the background is noise and is not scored.
+99.9th-percentile amplitude is 1). Phase metrics are restricted to a signal mask: pixels at
+least ``snr_db`` above the B-scan's noise floor. Phase in noise is random and is not scored.
 """
 
 import math
@@ -16,8 +16,19 @@ from .losses import lateral_phasor
 _EPS = 1e-12
 
 
-def tissue_mask(x, tissue_db: float = -30.0):
-    return x.abs() > 10 ** (tissue_db / 20)
+def noise_floor(x):
+    """
+    Per-B-scan noise amplitude of a complex (B, Z, X) batch: the median amplitude of the 10 %
+    of depth rows with the lowest median amplitude (rows above the tissue or deep below it).
+    """
+    row = x.abs().median(dim=-1).values                  # (B, Z)
+    k = max(1, row.shape[-1] // 10)
+    return row.sort(dim=-1).values[:, :k].median(dim=-1).values   # (B,)
+
+
+def tissue_mask(x, snr_db: float = 10.0):
+    """Pixels at least ``snr_db`` above each B-scan's noise floor."""
+    return x.abs() > noise_floor(x)[:, None, None] * 10 ** (snr_db / 20)
 
 
 def _wrap(a):
@@ -61,10 +72,11 @@ def ssim(a, b, window: int = 11, sigma: float = 1.5):
 
 
 @torch.no_grad()
-def compute_metrics(x_hat, x, tissue_db: float = -30.0, local_window: int = 5):
+def compute_metrics(x_hat, x, snr_db: float = 10.0, local_window: int = 5):
     """Returns a dict of floats. ``x_hat`` and ``x`` are complex (B, H, W)."""
     x_hat, x = x_hat.to(torch.complex64), x.to(torch.complex64)
-    mask = tissue_mask(x, tissue_db).float()
+    mask = tissue_mask(x, snr_db).float()
+    out_mask = {"mask_fraction": mask.mean().item()}
     out = {}
 
     # Amplitude, dB domain.
@@ -99,4 +111,5 @@ def compute_metrics(x_hat, x, tissue_db: float = -30.0, local_window: int = 5):
         mu = _masked_mean(i, mask)
         var = _masked_mean((i - mu) ** 2, mask)
         out[name] = (var.sqrt() / (mu + _EPS)).item()
+    out.update(out_mask)
     return out
