@@ -13,6 +13,7 @@
 #SBATCH --mem=96G
 #SBATCH --time=3-00:00:00          # accel partition maximum
 #SBATCH --output=slurm-%x-%j.out
+#SBATCH --mail-type=END,FAIL          # email when the job ends or fails; address from SBATCH_MAIL_USER
 
 set -euo pipefail
 CONFIG=${1:?usage: sbatch scripts/train.slurm <config.yaml> [--set k=v ...]}

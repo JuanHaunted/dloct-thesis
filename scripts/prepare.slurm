@@ -8,6 +8,7 @@
 #SBATCH --mem=24G
 #SBATCH --time=0-06:00:00
 #SBATCH --output=slurm-%x-%j.out
+#SBATCH --mail-type=END,FAIL          # email when the job ends or fails; address from SBATCH_MAIL_USER
 
 set -euo pipefail
 cd "${SLURM_SUBMIT_DIR}"
