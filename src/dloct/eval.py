@@ -13,6 +13,7 @@ import json
 import math
 from pathlib import Path
 
+import numpy as np
 import torch
 import yaml
 
@@ -44,6 +45,31 @@ def markdown_table(summary: dict, columns, ci: dict | None = None) -> str:
         return s
     rows = [f"| {m} | " + " | ".join(cell(m, k) for k, _ in columns) + " |" for m in summary]
     return "\n".join([head, sep, *rows])
+
+
+def spectral_recovery(spectra: dict, factor: int) -> dict:
+    """
+    Per method, compared with the ground-truth lateral MPS: the fraction of out-of-band energy
+    recovered, and the mean absolute dB error of the spectrum out of and inside the band.
+    Spectra are in dB relative to the ground-truth peak and clipped at −60 dB, so a band with
+    no energy at all scores its distance to that floor rather than an arbitrary number.
+    """
+    f, gt = spectra["ground truth"]
+    oob = np.abs(f) > 0.5 / factor   # the band-edge bin holds half the measured Nyquist bin
+    ref = gt.max()
+    to_db = lambda p: np.maximum(10 * np.log10(p / ref + 1e-30), -60.0)
+    gt_db = to_db(gt)
+    out = {}
+    for method, (_, s) in spectra.items():
+        if method == "ground truth":
+            continue
+        s_db = to_db(s)
+        out[method] = dict(
+            oob_energy_ratio=float(s[oob].sum() / gt[oob].sum()),
+            oob_db_error=float(np.abs(s_db - gt_db)[oob].mean()),
+            inband_db_error=float(np.abs(s_db - gt_db)[~oob].mean()),
+        )
+    return out
 
 
 def main():
@@ -81,9 +107,10 @@ def main():
     out = run / f"eval_{args.split}_{args.ckpt}_snr{args.snr_db:g}"
     out.mkdir(exist_ok=True)
     halfwidth = {m: compute_spectral_halfwidth(f, s / s.max(), 0.01).half_width for m, (f, s) in spectra.items()}
+    spectral = spectral_recovery(spectra, K)
     (out / "metrics.json").write_text(json.dumps(dict(
         step=ck["step"], ckpt=args.ckpt, split=args.split, n_bscans=len(ds), factor=K,
-        summary=summary, ci95=ci, per_sample=per_sample, mps_halfwidth_1pct=halfwidth,
+        summary=summary, ci95=ci, per_sample=per_sample, mps_halfwidth_1pct=halfwidth, spectral=spectral,
         per_bscan=[dict(sample=s, method=mt, **m) for s, mt, m in records]), indent=2))
 
     md = [f"# {cfg['name']} — {args.split} (K={K}, {len(ds)} B-scans, step {ck['step']}, {args.ckpt}, "
@@ -93,8 +120,14 @@ def main():
           "", "## All: phase", "", markdown_table(summary, PHASE_COLUMNS, ci)]
     for sample, s in sorted(per_sample.items()):
         md += ["", f"## {sample}", "", markdown_table(s, AMPLITUDE_COLUMNS), "", markdown_table(s, PHASE_COLUMNS)]
-    md += ["", "## Lateral MPS half-width at 1% of peak", "",
-           *[f"- {m}: {hw:.4f}" for m, hw in halfwidth.items()]]
+    md += ["", "## Lateral spectrum", "",
+           "Out-of-band = |f| > 1/(2K), the band the measurement cannot contain. Recovered energy is",
+           "relative to the ground truth (1 = fully restored). Spectral error is the mean |ΔdB| of",
+           "the MPS against the ground truth in each band (spectra clipped at −60 dB).", "",
+           "| method | out-of-band energy recovered | out-of-band spectral error [dB] | in-band spectral error [dB] | half-width @1% |",
+           "|---|---:|---:|---:|---:|",
+           *[f"| {m} | {s['oob_energy_ratio']:.3f} | {s['oob_db_error']:.2f} | {s['inband_db_error']:.2f} | {halfwidth[m]:.4f} |"
+             for m, s in spectral.items()]]
     (out / "metrics.md").write_text("\n".join(md) + "\n")
 
     mps_figure(spectra, out / "mps.png", K)

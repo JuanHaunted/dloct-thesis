@@ -1,6 +1,6 @@
 # Project status
 
-_Maintained by the programming agent. Last updated 2026-09-25._
+_Maintained by the programming agent. Last updated 2026-09-25 (unet_full test results)._
 
 ## Problem and approach
 
@@ -47,29 +47,56 @@ Per-volume coherence diagnostics are in `meta.json` on the cluster and summarize
 
 ## Results
 
-### `unet_full`: validation (Fovea4, OpticNerve3), 100k steps, best checkpoint at step 32.5k
+### `unet_full`: test set (Fovea5, OpticNerve4, Nail), final metrics
 
-Validation metrics use the **old** −30 dB mask, so the phase numbers are understated.
-Test-set numbers with the corrected mask are pending.
+Source: `runs/unet_full/eval_test_best_snr10/metrics.md` (best checkpoint, step 32.5k) and
+`eval_test_latest_snr10/` (step 100k). 192 B-scans (64 per sample). Values are means over
+B-scans with [95% bootstrap CI]. Phase metrics use pixels ≥ 10 dB above the noise floor (17.8% of pixels).
 
-| | interpolation | unet_full |
-|---|---:|---:|
-| PSNR dB-amplitude | 19.30 | 21.62 |
-| SSIM dB-amplitude | 0.519 | 0.656 |
-| complex NRMSE | 0.766 | 0.644 |
-| \|ρ\| local | 0.628 | 0.688 |
-| phase error, amplitude-weighted [rad] | 0.473 | 0.437 |
-| inter-A-line Δφ error [rad] | 0.618 | 0.592 |
+| metric | interpolation | unet_full (best) | paired Δ [95% CI] | B-scans improved |
+|---|---:|---:|---:|---:|
+| PSNR dB-amplitude ↑ | 19.54 [19.49, 19.59] | **21.97** [21.89, 22.05] | +2.44 [+2.40, +2.47] dB | 100% |
+| SSIM dB-amplitude ↑ | 0.519 | **0.660** | +0.141 (+27%) | 100% |
+| complex NRMSE ↓ | 0.751 | **0.638** | −0.114 (−15%) | 100% |
+| \|ρ\| local ↑ | 0.719 | **0.764** | +0.045 | 100% |
+| WPC ↑ | 0.791 [0.784, 0.797] | **0.834** [0.828, 0.840] | +0.043 | 100% |
+| CCC ↑ | 0.745 [0.739, 0.751] | **0.794** [0.788, 0.799] | +0.049 | 100% |
+| PG-SSIM ↑ | 0.203 | **0.217** | +0.013 | 97.9% |
+| phase error, amplitude-weighted [rad] ↓ | 0.385 | **0.345** | −0.040 (−10%) | 99.5% |
+| inter-A-line Δφ error [rad] ↓ | 0.389 | **0.364** | −0.025 (−6%) | 96.9% |
 
-Observations: large amplitude gain and modest phase gain. Phase metrics overfit after ~35k steps
-while amplitude keeps improving. Data consistency adds ~nothing, because the model already
-preserves the measured A-lines.
+Per sample (best checkpoint), all three improve on every metric:
+
+| sample | PSNR interp → model | WPC interp → model | CCC interp → model | Δφ err interp → model |
+|---|---|---|---|---|
+| Fovea5 | 19.32 → 21.65 | 0.796 → 0.841 | 0.767 → 0.815 | 0.290 → 0.259 |
+| OpticNerve4 | 19.29 → 21.56 | 0.764 → 0.812 | 0.736 → 0.785 | 0.398 → 0.376 |
+| Nail (unseen tissue) | 20.00 → 22.71 | 0.813 → 0.849 | 0.732 → 0.782 | 0.477 → 0.457 |
+
+Best vs final checkpoint: step 100k has slightly better amplitude (PSNR 22.08, SSIM 0.664) and
+slightly worse phase (WPC 0.830, Δφ error 0.378). This is the amplitude–phase trade-off over
+training, and the best checkpoint (selected on validation |ρ| local) is the phase-favouring one.
+
+Lateral spectrum (`mps.png`): interpolation has excess energy near the band edge (aliased energy
+folded back) and none beyond it. The model matches the ground truth in-band (the fold is undone)
+and restores part of the out-of-band energy, but ends ~8 dB below the ground truth at the Nyquist
+edge (−16 vs −8 dB): the finest lateral scales are still under-recovered. An out-of-band recovery
+metric was added to `eval.py` after this evaluation, so re-evaluation reports it as a number.
+
+Mask effect: with the old fixed −30 dB mask the phase-error reduction was −8.1% (weighted) and
+−4.5% (Δφ); with the SNR mask it is −10.3% and −6.3%. The old mask understated the phase gains.
+
+Data consistency: no measurable effect. The model already reproduces the measured A-lines.
+
+### `unet_full`: validation, for reference
+
+Best at step 32.5k. Phase metrics overfit after ~35k steps while amplitude keeps improving.
 
 ### Pending
 
-- [ ] `unet_full` test evaluation with SNR mask, WPC/CCC/PG-SSIM and CIs (best and latest checkpoints)
 - [ ] `cascade_full` training (about 19 h total), then evaluation
 - [ ] `unet_magnitude`, `unet_complex` training and evaluation
+- [ ] Re-run `unet_full` evaluation to get the out-of-band spectral recovery numbers (optional)
 
 ## Open questions
 
