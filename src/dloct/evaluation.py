@@ -5,7 +5,7 @@ from collections import defaultdict
 import numpy as np
 import torch
 
-from .metrics import compute_metrics
+from .metrics import compute_metrics, ssim, to_db_image
 from .physics import data_consistency, measure
 
 
@@ -43,8 +43,11 @@ def evaluate(model, dataset, factor, device, snr_db=10.0, amp_dtype=None, keep=0
     ``(summary, per_sample, examples, spectra)``: ``per_sample`` breaks the summary down by
     sample (A/B channels together), ``examples`` holds the first ``keep`` B-scans'
     reconstructions for figures and ``spectra`` the lateral MPS per method. With
-    ``return_records`` it also returns the per-B-scan metrics
-    ``[(sample, method, {metric: value}), ...]`` for confidence intervals.
+    ``return_records`` it also returns the per-B-scan metrics as dicts with keys ``sample``,
+    ``volume``, ``y``, ``method`` and the metric values, for statistics.
+
+    ``identity_ssim`` is the SSIM (dB image) between a method's output and the interpolated
+    measurement it started from: close to 1 means the method barely changed its input.
     """
     model.eval()
     records = []
@@ -55,20 +58,23 @@ def evaluate(model, dataset, factor, device, snr_db=10.0, amp_dtype=None, keep=0
         x = x.to(device)[None]
         recon = reconstruct(model, x, factor, amp_dtype=amp_dtype)
         sample = dataset.vols.volume(name)["group"].split("/", 1)[-1]
+        meas_db = to_db_image(recon["interpolation"])
         for method, z in recon.items():
-            records.append((sample, method, compute_metrics(z, x, snr_db, factor=factor)))
+            m = compute_metrics(z, x, snr_db, factor=factor)
+            m["identity_ssim"] = ssim(to_db_image(z), meas_db).item()
+            records.append(dict(sample=sample, volume=name, y=int(y), method=method, **m))
             mps[method].append(lateral_mps(z))
         mps["ground truth"].append(lateral_mps(x))
         if i < keep:
             examples.append((f"{name} y={y}", x[0].cpu(), {k: v[0].cpu() for k, v in recon.items()}))
 
     grouped = defaultdict(list)
-    for sample, method, m in records:
-        grouped[("all", method)].append(m)
-        grouped[(sample, method)].append(m)
+    for r in records:
+        grouped[("all", r["method"])].append(r)
+        grouped[(r["sample"], r["method"])].append(r)
     table = defaultdict(dict)
-    for (key, method), ms in grouped.items():
-        table[key][method] = {k: float(np.mean([m[k] for m in ms])) for k in ms[0]}
+    for (key, method), rs in grouped.items():
+        table[key][method] = {k: float(np.nanmean([r[k] for r in rs])) for k in metric_keys(rs[0])}
     width = min(len(v[0]) for v in mps.values())
     spectra = {}
     for method, lst in mps.items():
@@ -78,10 +84,9 @@ def evaluate(model, dataset, factor, device, snr_db=10.0, amp_dtype=None, keep=0
     return out + (records,) if return_records else out
 
 
-def bootstrap_ci(values, n_boot: int = 2000, level: float = 0.95, seed: int = 0):
-    """Percentile bootstrap confidence interval of the mean over B-scans."""
-    v = np.asarray(values, dtype=np.float64)
-    idx = np.random.default_rng(seed).integers(0, len(v), (n_boot, len(v)))
-    means = v[idx].mean(axis=1)
-    a = (1 - level) / 2
-    return float(np.quantile(means, a)), float(np.quantile(means, 1 - a))
+RECORD_KEYS = ("sample", "volume", "y", "method")
+
+
+def metric_keys(record: dict):
+    """The metric names of a per-B-scan record (everything except its identifiers)."""
+    return [k for k in record if k not in RECORD_KEYS]

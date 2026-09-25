@@ -84,6 +84,29 @@ def ssim(a, b, window: int = 11, sigma: float = 1.5, data_range: float = 1.0, ma
     return _masked_mean(s.squeeze(1), mask.float())
 
 
+def hist_similarity(a, b, bins: int = 256):
+    """Cosine similarity of the 256-bin histograms of two [0, 1] images (1 = same distribution)."""
+    ha = torch.histc(a.float(), bins=bins, min=0, max=1)
+    hb = torch.histc(b.float(), bins=bins, min=0, max=1)
+    return (ha @ hb / (ha.norm() * hb.norm() + _EPS)).item()
+
+
+def coherence_by_decile(x_hat, x, n_bins: int = 10):
+    """
+    Mean cos(φ̂ − φ) within each decile of ground-truth amplitude (d1 = weakest, noise;
+    d10 = strongest signal). Unweighted, so it shows where along the signal range phase is kept.
+    """
+    amp = x.abs().flatten()
+    cosd = ((x_hat * x.conj()).real / (x_hat.abs() * x.abs() + _EPS)).flatten()
+    edges = torch.quantile(amp.float(), torch.linspace(0, 1, n_bins + 1, device=amp.device))
+    out = {}
+    for i in range(n_bins):
+        hi_ok = amp <= edges[i + 1] if i == n_bins - 1 else amp < edges[i + 1]
+        m = (amp >= edges[i]) & hi_ok
+        out[f"coh_d{i + 1}"] = cosd[m].mean().item() if m.any() else float("nan")
+    return out
+
+
 def _phase_gradients(z):
     """Wrapped axial and lateral phase differences of a complex (B, Z, X) field."""
     return torch.angle(z[:, 1:] * z[:, :-1].conj()), torch.angle(z[..., 1:] * z[..., :-1].conj())
@@ -130,6 +153,7 @@ def compute_metrics(x_hat, x, snr_db: float = 10.0, local_window: int = 5, facto
     out["psnr_db"] = psnr(a_hat, a).item()
     out["ssim_db"] = ssim(a_hat, a).item()
     # Whole-image dB metrics are dominated by background noise (most pixels): report tissue too.
+    out["hist_sim"] = hist_similarity(a_hat, a)
     out["psnr_db_tissue"] = psnr(a_hat, a, mask.bool()).item()
     out["ssim_db_tissue"] = ssim(a_hat, a, mask=mask.bool()).item()
     if factor and factor > 1:
@@ -173,5 +197,6 @@ def compute_metrics(x_hat, x, snr_db: float = 10.0, local_window: int = 5, facto
         var = _masked_mean((i - mu) ** 2, mask)
         out[name] = (var.sqrt() / (mu + _EPS)).item()
     out.update(phase_consistency_metrics(x_hat, x))
+    out.update(coherence_by_decile(x_hat, x))
     out.update(out_mask)
     return out
