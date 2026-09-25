@@ -97,9 +97,19 @@ Best at step 32.5k. Phase metrics overfit after ~35k steps while amplitude keeps
 - [ ] `cascade_full` training (about 19 h total), then evaluation
 - [ ] `unet_magnitude`, `unet_complex` training and evaluation
 - [ ] Re-run `unet_full` evaluation to get the out-of-band spectral recovery numbers (optional)
+- [ ] Before/after figure for `unet_full` (`scripts/figure_before_after.py`, running on Apolo)
+
+### Next architecture (decided 2026-09-25)
+
+Adversarial training (a discriminator for realistic speckle) on top of **both** `unet_full` and
+`cascade_full`, compared against those same networks without it. It will be implemented after the
+`unet_full` before/after figure is reviewed, and launched after the cascade results.
+`unet_phase2` (phase terms ×2, 40k steps) is on hold. A K=4 run is possible next week.
 
 ## Open questions
 
 - Are any differently named samples the same physical tissue (e.g. OpticNerve4 vs OpticNerveNew)?
   The user confirmed the split as is.
-- Optional second iteration: phase-loss weight 0.2, and earlier stopping given phase overfitting.
+- Adversarial models: which metrics show the benefit? Discriminators usually improve realism
+  (speckle statistics, high-frequency spectrum) and can cost pixel-wise distortion (PSNR, WPC):
+  the perception–distortion trade-off, Blau & Michaeli 2018. Plan to report both kinds.
