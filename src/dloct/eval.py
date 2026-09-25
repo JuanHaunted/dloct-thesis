@@ -17,22 +17,32 @@ import torch
 import yaml
 
 from .data import EvalBScans
-from .evaluation import amp_dtype, evaluate
+from .evaluation import amp_dtype, bootstrap_ci, evaluate
 from .models.reconstructors import build_model
 from .sampling_analysis import compute_spectral_halfwidth
 from .visualize import comparison_figure, mps_figure
 
-COLUMNS = [
+AMPLITUDE_COLUMNS = [
     ("psnr_db", "PSNR dB-amp ↑"), ("ssim_db", "SSIM dB-amp ↑"), ("nrmse", "cNRMSE ↓"),
-    ("rho_global", "\\|ρ\\| ↑"), ("rho_local", "\\|ρ\\| local ↑"), ("phase_err_rad", "φ err [rad] ↓"),
-    ("dphase_err_rad", "Δφ err [rad] ↓"), ("speckle_contrast", "speckle C"),
+    ("rho_global", "\\|ρ\\| ↑"), ("rho_local", "\\|ρ\\| local ↑"),
+]
+PHASE_COLUMNS = [
+    ("wpc", "WPC ↑"), ("ccc", "CCC ↑"), ("pg_ssim", "PG-SSIM ↑"),
+    ("phase_err_w_rad", "φ err [rad] ↓"), ("dphase_err_rad", "Δφ err [rad] ↓"),
 ]
 
 
-def markdown_table(summary: dict) -> str:
-    head = "| method | " + " | ".join(c for _, c in COLUMNS) + " |"
-    sep = "|---|" + "---:|" * len(COLUMNS)
-    rows = [f"| {m} | " + " | ".join(f"{v[k]:.4f}" for k, _ in COLUMNS) + " |" for m, v in summary.items()]
+def markdown_table(summary: dict, columns, ci: dict | None = None) -> str:
+    """One row per method; with ``ci`` each cell reads ``mean [lo, hi]``."""
+    head = "| method | " + " | ".join(c for _, c in columns) + " |"
+    sep = "|---|" + "---:|" * len(columns)
+    def cell(method, k):
+        s = f"{summary[method][k]:.4f}"
+        if ci:
+            lo, hi = ci[method][k]
+            s += f" [{lo:.4f}, {hi:.4f}]"
+        return s
+    rows = [f"| {m} | " + " | ".join(cell(m, k) for k, _ in columns) + " |" for m in summary]
     return "\n".join([head, sep, *rows])
 
 
@@ -62,21 +72,27 @@ def main():
 
     ds = EvalBScans(args.data_root or dcfg["root"], args.split, per_volume=args.per_volume or None,
                     divisor=divisor, sources=dcfg.get("sources"))
-    summary, per_source, examples, spectra = evaluate(model, ds, K, device, args.snr_db,
-                                                      amp_dtype=amp_dtype(cfg["train"].get("precision", "auto")), keep=args.examples)
+    summary, per_sample, examples, spectra, records = evaluate(
+        model, ds, K, device, args.snr_db, amp_dtype=amp_dtype(cfg["train"].get("precision", "auto")),
+        keep=args.examples, return_records=True)
+    ci = {method: {k: bootstrap_ci([m[k] for _, mt, m in records if mt == method]) for k in summary[method]}
+          for method in summary}
 
     out = run / f"eval_{args.split}_{args.ckpt}_snr{args.snr_db:g}"
     out.mkdir(exist_ok=True)
     halfwidth = {m: compute_spectral_halfwidth(f, s / s.max(), 0.01).half_width for m, (f, s) in spectra.items()}
     (out / "metrics.json").write_text(json.dumps(dict(
         step=ck["step"], ckpt=args.ckpt, split=args.split, n_bscans=len(ds), factor=K,
-        summary=summary, per_source=per_source, mps_halfwidth_1pct=halfwidth), indent=2))
+        summary=summary, ci95=ci, per_sample=per_sample, mps_halfwidth_1pct=halfwidth,
+        per_bscan=[dict(sample=s, method=mt, **m) for s, mt, m in records]), indent=2))
 
     md = [f"# {cfg['name']} — {args.split} (K={K}, {len(ds)} B-scans, step {ck['step']}, {args.ckpt}, "
           f"phase metrics at SNR >= {args.snr_db:g} dB, {summary['interpolation']['mask_fraction']:.0%} of pixels)",
-          "", "## All", "", markdown_table(summary)]
-    for source, s in per_source.items():
-        md += ["", f"## {source}", "", markdown_table(s)]
+          "", "Mean over B-scans [95% bootstrap CI].", "",
+          "## All: amplitude and complex field", "", markdown_table(summary, AMPLITUDE_COLUMNS, ci),
+          "", "## All: phase", "", markdown_table(summary, PHASE_COLUMNS, ci)]
+    for sample, s in sorted(per_sample.items()):
+        md += ["", f"## {sample}", "", markdown_table(s, AMPLITUDE_COLUMNS), "", markdown_table(s, PHASE_COLUMNS)]
     md += ["", "## Lateral MPS half-width at 1% of peak", "",
            *[f"- {m}: {hw:.4f}" for m, hw in halfwidth.items()]]
     (out / "metrics.md").write_text("\n".join(md) + "\n")

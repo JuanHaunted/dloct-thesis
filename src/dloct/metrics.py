@@ -55,20 +55,57 @@ def psnr(a, b):
     return (10 * torch.log10(1.0 / (mse + _EPS))).mean()
 
 
-def ssim(a, b, window: int = 11, sigma: float = 1.5):
-    """Gaussian-window SSIM on [0, 1] images (B, H, W)."""
+def ssim(a, b, window: int = 11, sigma: float = 1.5, data_range: float = 1.0, mask=None):
+    """
+    Gaussian-window SSIM of images (B, H, W) with the given dynamic range. Without ``mask`` it
+    is the mean over valid windows; with a mask (B, H, W) it is the mean of the same-size SSIM
+    map over the masked pixels.
+    """
     g = torch.arange(window, device=a.device, dtype=a.dtype) - window // 2
     g = torch.exp(-g ** 2 / (2 * sigma ** 2))
     g = g / g.sum()
     k = (g[:, None] * g[None, :])[None, None]
+    pad = 0 if mask is None else window // 2
     a, b = a.unsqueeze(1), b.unsqueeze(1)
-    mu_a, mu_b = F.conv2d(a, k), F.conv2d(b, k)
-    var_a = F.conv2d(a * a, k) - mu_a ** 2
-    var_b = F.conv2d(b * b, k) - mu_b ** 2
-    cov = F.conv2d(a * b, k) - mu_a * mu_b
-    c1, c2 = 0.01 ** 2, 0.03 ** 2
+    conv = lambda v: F.conv2d(v, k, padding=pad)
+    mu_a, mu_b = conv(a), conv(b)
+    var_a = conv(a * a) - mu_a ** 2
+    var_b = conv(b * b) - mu_b ** 2
+    cov = conv(a * b) - mu_a * mu_b
+    c1, c2 = (0.01 * data_range) ** 2, (0.03 * data_range) ** 2
     s = ((2 * mu_a * mu_b + c1) * (2 * cov + c2)) / ((mu_a ** 2 + mu_b ** 2 + c1) * (var_a + var_b + c2))
-    return s.mean()
+    if mask is None:
+        return s.mean()
+    return _masked_mean(s.squeeze(1), mask.float())
+
+
+def _phase_gradients(z):
+    """Wrapped axial and lateral phase differences of a complex (B, Z, X) field."""
+    return torch.angle(z[:, 1:] * z[:, :-1].conj()), torch.angle(z[..., 1:] * z[..., :-1].conj())
+
+
+def phase_consistency_metrics(x_hat, x):
+    """
+    Complex-field phase metrics that are insensitive to the absolute phase:
+
+    * ``wpc``: amplitude-weighted phase coherence Σ|x̂||x|cos Δφ / Σ|x̂||x| over the B-scan,
+      in [-1, 1] (1 = aligned, 0 = decorrelated).
+    * ``ccc``: complex coherence |Σ x̂ x̄| / sqrt(Σ|x̂|² Σ|x|²) over pixels brighter than the
+      B-scan's median ground-truth amplitude (invariant to a global phase offset).
+    * ``pg_ssim``: mean SSIM (range 2π) of the wrapped axial and lateral phase-gradient maps,
+      averaged over the same bright-pixel mask.
+    """
+    cross = x_hat * x.conj()
+    wpc = cross.real.sum(dim=(-2, -1)) / ((x_hat.abs() * x.abs()).sum(dim=(-2, -1)) + _EPS)
+    amp = x.abs()
+    bright = amp > amp.flatten(1).median(dim=1).values[:, None, None]
+    m = bright.float()
+    ccc = (cross * m).sum(dim=(-2, -1)).abs() / torch.sqrt(
+        (x_hat.abs() ** 2 * m).sum(dim=(-2, -1)) * (amp ** 2 * m).sum(dim=(-2, -1)) + _EPS)
+    (gz_hat, gx_hat), (gz, gx) = _phase_gradients(x_hat), _phase_gradients(x)
+    pg = 0.5 * (ssim(gz_hat, gz, data_range=2 * math.pi, mask=bright[:, 1:] & bright[:, :-1])
+                + ssim(gx_hat, gx, data_range=2 * math.pi, mask=bright[..., 1:] & bright[..., :-1]))
+    return {"wpc": wpc.mean().item(), "ccc": ccc.mean().item(), "pg_ssim": pg.item()}
 
 
 @torch.no_grad()
@@ -111,5 +148,6 @@ def compute_metrics(x_hat, x, snr_db: float = 10.0, local_window: int = 5):
         mu = _masked_mean(i, mask)
         var = _masked_mean((i - mu) ** 2, mask)
         out[name] = (var.sqrt() / (mu + _EPS)).item()
+    out.update(phase_consistency_metrics(x_hat, x))
     out.update(out_mask)
     return out

@@ -37,39 +37,51 @@ def lateral_mps(z: torch.Tensor):
 
 
 @torch.no_grad()
-def evaluate(model, dataset, factor, device, snr_db=10.0, amp_dtype=None, keep=0):
+def evaluate(model, dataset, factor, device, snr_db=10.0, amp_dtype=None, keep=0, return_records=False):
     """
     Averages metrics over the B-scans of ``dataset`` (an ``EvalBScans``). Returns
-    ``(summary, per_source, examples, spectra)``; ``examples`` holds the first ``keep``
-    B-scans' reconstructions for figures and ``spectra`` the lateral MPS per method.
+    ``(summary, per_sample, examples, spectra)``: ``per_sample`` breaks the summary down by
+    sample (A/B channels together), ``examples`` holds the first ``keep`` B-scans'
+    reconstructions for figures and ``spectra`` the lateral MPS per method. With
+    ``return_records`` it also returns the per-B-scan metrics
+    ``[(sample, method, {metric: value}), ...]`` for confidence intervals.
     """
     model.eval()
-    sums, counts = defaultdict(lambda: defaultdict(float)), defaultdict(int)
+    records = []
     mps = defaultdict(list)
     examples = []
     for i in range(len(dataset)):
         x, name, y = dataset[i]
         x = x.to(device)[None]
         recon = reconstruct(model, x, factor, amp_dtype=amp_dtype)
-        source = dataset.vols.volume(name)["source"]
+        sample = dataset.vols.volume(name)["group"].split("/", 1)[-1]
         for method, z in recon.items():
-            m = compute_metrics(z, x, snr_db)
-            for key in ("all", source):
-                for k, v in m.items():
-                    sums[(key, method)][k] += v
+            records.append((sample, method, compute_metrics(z, x, snr_db)))
             mps[method].append(lateral_mps(z))
         mps["ground truth"].append(lateral_mps(x))
-        counts["all"] += 1
-        counts[source] += 1
         if i < keep:
             examples.append((f"{name} y={y}", x[0].cpu(), {k: v[0].cpu() for k, v in recon.items()}))
 
+    grouped = defaultdict(list)
+    for sample, method, m in records:
+        grouped[("all", method)].append(m)
+        grouped[(sample, method)].append(m)
     table = defaultdict(dict)
-    for (key, method), s in sums.items():
-        table[key][method] = {k: v / counts[key] for k, v in s.items()}
+    for (key, method), ms in grouped.items():
+        table[key][method] = {k: float(np.mean([m[k] for m in ms])) for k in ms[0]}
     width = min(len(v[0]) for v in mps.values())
     spectra = {}
     for method, lst in mps.items():
         same = [p for p in lst if len(p) == width]
         spectra[method] = (np.fft.fftshift(np.fft.fftfreq(width)), np.mean(same, axis=0))
-    return dict(table["all"]), {k: dict(v) for k, v in table.items() if k != "all"}, examples, spectra
+    out = (dict(table["all"]), {k: dict(v) for k, v in table.items() if k != "all"}, examples, spectra)
+    return out + (records,) if return_records else out
+
+
+def bootstrap_ci(values, n_boot: int = 2000, level: float = 0.95, seed: int = 0):
+    """Percentile bootstrap confidence interval of the mean over B-scans."""
+    v = np.asarray(values, dtype=np.float64)
+    idx = np.random.default_rng(seed).integers(0, len(v), (n_boot, len(v)))
+    means = v[idx].mean(axis=1)
+    a = (1 - level) / 2
+    return float(np.quantile(means, a)), float(np.quantile(means, 1 - a))
