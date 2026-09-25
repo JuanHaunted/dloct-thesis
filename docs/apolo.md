@@ -29,6 +29,15 @@ ssh ugr-jcospinav@apolo-3.eafit.edu.co 'bash ~/apolo_probe.sh'
 scp ugr-jcospinav@apolo-3.eafit.edu.co:~/apolo_report.txt .
 ```
 
+## Email notifications
+
+The job scripts request an email when a job ends or fails (`--mail-type=END,FAIL`). Set the
+address once on Apolo:
+
+```bash
+echo 'export SBATCH_MAIL_USER=you@example.com' >> ~/.bashrc && source ~/.bashrc
+```
+
 ## 1. Upload code and data (from your machine, VPN on)
 
 ```bash
