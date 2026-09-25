@@ -59,7 +59,7 @@ def fmt(d):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--config", required=True)
-    p.add_argument("--set", nargs="*", default=[], metavar="KEY=VALUE")
+    p.add_argument("--set", nargs="*", default=[], action="extend", metavar="KEY=VALUE")
     args = p.parse_args()
     cfg = load_config(args.config, args.set)
     sys.stdout.reconfigure(line_buffering=True)  # stream logs into SLURM output files
