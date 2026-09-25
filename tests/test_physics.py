@@ -91,3 +91,19 @@ def test_bulk_phase_removal_is_independent_of_aline_jitter():
     ramp = np.exp(1j * 0.3 * np.arange(64))[None, :, None].astype(np.complex64)
     g = np.vdot(clean[0] * ramp[0], remove_bulk_phase(x * ramp)[0])
     assert np.allclose(remove_bulk_phase(x * ramp)[0], clean[0] * ramp[0] * g / abs(g), atol=1e-4)
+
+
+@pytest.mark.parametrize("a,b", [
+    ("OpticNerve3A", "OpticNerve3B"), ("OpticNerveANew", "OpticNerveBNew"),
+    ("OpticNerveAOld", "OpticNerveBOld"), ("S.Eye2A", "S.Eye2B"), ("Fovea1A", "Fovea1B"),
+    ("polInt1_polOut2_tomRaw", "polInt2_polOut1_tomRaw"),
+])
+def test_channels_of_one_sample_share_a_group(a, b):
+    from dloct.prepare_data import group_of
+    assert group_of("phase", a) == group_of("phase", b)
+
+
+def test_distinct_samples_keep_distinct_groups():
+    from dloct.prepare_data import group_of
+    names = ["OpticNerve3A", "OpticNerve4A", "OpticNerveANew", "OpticNerveAOld", "unpairCadaverhearth", "ChickenBreastA"]
+    assert len({group_of("phase", n) for n in names}) == len(names)
