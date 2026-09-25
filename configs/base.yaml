@@ -8,6 +8,7 @@ data:
   sources: [phase]     # real acquisitions only; null = every source in meta.json
   factor: 2            # lateral decimation K. Real tomograms are near Nyquist (K* ~ 1), so K=2
                        # already aliases; K=4 is the harder follow-up (see meta.json diagnostics)
+  balance: sample      # draw each sample equally often (bscan: proportional to its B-scans)
   patch: [256, 256]    # (Z, X) training crop
   batch_size: 16       # per GPU (H100 NVL, 94 GB)
   num_workers: 8
