@@ -130,14 +130,14 @@ def main():
 
     def validate():
         nonlocal best
-        summary, per_source, examples, _ = evaluate(ema.module, val_ds, K, device, dcfg["tissue_db"],
+        summary, per_source, examples, _ = evaluate(ema.module, val_ds, K, device, dcfg.get("snr_db", 10.0),
                                                     amp_dtype=dtype, keep=1)
         for method, m in summary.items():
             print(f"[val {step}] {method:14s} {fmt(m)}")
         log(dict(step=step, kind="val", metrics=summary, per_source=per_source))
         name, gt, preds = examples[0]
         comparison_figure(gt, preds, run_dir / "previews" / f"step{step:07d}.png",
-                          dcfg["tissue_db"], title=f"{cfg['name']} step {step} — {name}")
+                          dcfg.get("snr_db", 10.0), title=f"{cfg['name']} step {step} — {name}")
         method = "model+dc" if "model+dc" in summary else "model"
         score = summary[method][tcfg["select_metric"]]
         better = best is None or (score > best if tcfg["select_mode"] == "max" else score < best)

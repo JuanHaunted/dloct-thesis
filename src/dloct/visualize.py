@@ -15,7 +15,7 @@ def _np(z):
     return z.detach().cpu().numpy()
 
 
-def comparison_figure(gt: torch.Tensor, preds: dict, path, tissue_db=-30.0, dyn_range=50.0,
+def comparison_figure(gt: torch.Tensor, preds: dict, path, snr_db=10.0, dyn_range=50.0,
                       title=None):
     """
     ``gt`` is a complex (Z, X) B-scan, ``preds`` maps method name -> complex (Z, X).
@@ -23,7 +23,7 @@ def comparison_figure(gt: torch.Tensor, preds: dict, path, tissue_db=-30.0, dyn_
     (tissue only), amplitude error vs GT.
     """
     rows = {"ground truth": gt, **preds}
-    mask = _np(tissue_mask(gt[None], tissue_db)[0])
+    mask = _np(tissue_mask(gt[None], snr_db)[0])
     mask_d = mask[:, 1:] & mask[:, :-1]
     gt_db = 20 * np.log10(np.abs(_np(gt)) + 1e-12)
 

@@ -44,6 +44,8 @@ def main():
     p.add_argument("--per-volume", type=int, default=32, help="B-scans per volume (0 = all)")
     p.add_argument("--examples", type=int, default=4)
     p.add_argument("--data-root", default=None, help="override data.root from the run config")
+    p.add_argument("--snr-db", type=float, default=10.0,
+                   help="phase metrics only where the signal is this far above the noise floor")
     args = p.parse_args()
 
     run = Path(args.run)
@@ -60,17 +62,18 @@ def main():
 
     ds = EvalBScans(args.data_root or dcfg["root"], args.split, per_volume=args.per_volume or None,
                     divisor=divisor, sources=dcfg.get("sources"))
-    summary, per_source, examples, spectra = evaluate(model, ds, K, device, dcfg["tissue_db"],
+    summary, per_source, examples, spectra = evaluate(model, ds, K, device, args.snr_db,
                                                       amp_dtype=amp_dtype(cfg["train"].get("precision", "auto")), keep=args.examples)
 
-    out = run / f"eval_{args.split}"
+    out = run / f"eval_{args.split}_{args.ckpt}_snr{args.snr_db:g}"
     out.mkdir(exist_ok=True)
     halfwidth = {m: compute_spectral_halfwidth(f, s / s.max(), 0.01).half_width for m, (f, s) in spectra.items()}
     (out / "metrics.json").write_text(json.dumps(dict(
         step=ck["step"], ckpt=args.ckpt, split=args.split, n_bscans=len(ds), factor=K,
         summary=summary, per_source=per_source, mps_halfwidth_1pct=halfwidth), indent=2))
 
-    md = [f"# {cfg['name']} — {args.split} (K={K}, {len(ds)} B-scans, step {ck['step']}, {args.ckpt})",
+    md = [f"# {cfg['name']} — {args.split} (K={K}, {len(ds)} B-scans, step {ck['step']}, {args.ckpt}, "
+          f"phase metrics at SNR >= {args.snr_db:g} dB, {summary['interpolation']['mask_fraction']:.0%} of pixels)",
           "", "## All", "", markdown_table(summary)]
     for source, s in per_source.items():
         md += ["", f"## {source}", "", markdown_table(s)]
@@ -80,7 +83,7 @@ def main():
 
     mps_figure(spectra, out / "mps.png", K)
     for i, (name, gt, preds) in enumerate(examples):
-        comparison_figure(gt, preds, out / f"example_{i}.png", dcfg["tissue_db"], title=f"{cfg['name']} — {name}")
+        comparison_figure(gt, preds, out / f"example_{i}.png", args.snr_db, title=f"{cfg['name']} — {name}")
     print("\n".join(md))
     print(f"\nwrote {out}")
 
