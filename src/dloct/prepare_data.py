@@ -95,7 +95,9 @@ def amplitude_scale(vol: np.ndarray, q: float = 99.9, n: int = 2_000_000, seed: 
     return float(np.percentile(np.abs(flat[idx]), q))
 
 
-def assign_splits(volumes: dict) -> dict:
+def assign_splits(volumes: dict, split_file: str | None = None) -> dict:
+    if split_file:
+        return splits_from_file(volumes, split_file)
     splits = {"train": [], "val": [], "test": []}
     by_source = {}
     for name, v in volumes.items():
@@ -124,6 +126,28 @@ def assign_splits(volumes: dict) -> dict:
     return splits
 
 
+def splits_from_file(volumes: dict, split_file: str) -> dict:
+    """
+    Explicit split by sample: YAML ``{val: [...], test: [...]}`` listing group names without
+    the source prefix (e.g. ``Fovea5``, ``OpticNerve4``). Every other sample goes to train.
+    """
+    import yaml
+
+    spec = yaml.safe_load(Path(split_file).read_text()) or {}
+    by_group = {}
+    for name, v in volumes.items():
+        by_group.setdefault(v["group"].split("/", 1)[1], []).append(name)
+    unknown = [g for role in ("val", "test") for g in spec.get(role, []) if g not in by_group]
+    if unknown:
+        raise SystemExit(f"{split_file}: unknown samples {unknown}; known: {sorted(by_group)}")
+    role_of = {g: role for role in ("val", "test") for g in spec.get(role, [])}
+    splits = {"train": [], "val": [], "test": []}
+    for group, names in sorted(by_group.items()):
+        for name in sorted(names):
+            splits[role_of.get(group, "train")].append([name, 0, volumes[name]["shape"][0]])
+    return splits
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--src", default="data/train")
@@ -131,6 +155,8 @@ def main():
     p.add_argument("--layout", default="ZXY", help="axis order of the raw volume (default ZXY)")
     p.add_argument("--bulk-phase", nargs="*", default=["phase"], metavar="SOURCE",
                    help="sources (subdirectories) to bulk-phase correct; default: phase")
+    p.add_argument("--split-file", default=None,
+                   help="YAML {val: [...], test: [...]} of sample names; default: automatic")
     p.add_argument("--overwrite", action="store_true")
     args = p.parse_args()
 
@@ -164,11 +190,12 @@ def main():
             print(f"    {tag:15s} " + " ".join(f"{k}={v:.3f}" for k, v in d.items()))
         del vol
 
-    meta = dict(volumes=volumes, splits=assign_splits(volumes), layout="YZX complex64")
+    meta = dict(volumes=volumes, splits=assign_splits(volumes, args.split_file), layout="YZX complex64")
     meta_path.write_text(json.dumps(meta, indent=2))
     for split, ranges in meta["splits"].items():
         n = sum(e - s for _, s, e in ranges)
-        print(f"{split}: {len(ranges)} ranges, {n} B-scans")
+        samples = sorted({volumes[name]["group"].split("/", 1)[1] for name, _, _ in ranges})
+        print(f"{split}: {len(ranges)} volumes, {n} B-scans: {', '.join(samples)}")
 
 
 if __name__ == "__main__":
