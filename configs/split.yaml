@@ -1,0 +1,6 @@
+# Train/val/test split by sample (A/B channels of a sample always stay together).
+# Samples not listed here are used for training. Names are volume stems without the A/B letter.
+# Held out: one of each repeated anatomy (fovea, optic nerve) for val and for test, plus one
+# unseen tissue type (nail) in test to check generalization.
+val: [Fovea4, OpticNerve3]
+test: [Fovea5, OpticNerve4, Nail]
