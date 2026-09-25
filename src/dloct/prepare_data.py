@@ -190,6 +190,10 @@ def main():
             print(f"    {tag:15s} " + " ".join(f"{k}={v:.3f}" for k, v in d.items()))
         del vol
 
+    # Recompute groups for every volume, including ones converted by an earlier run, so a
+    # change to the grouping rule takes effect without re-converting the data.
+    for v in volumes.values():
+        v["group"] = group_of(v["source"], Path(v["file"]).stem)
     meta = dict(volumes=volumes, splits=assign_splits(volumes, args.split_file), layout="YZX complex64")
     meta_path.write_text(json.dumps(meta, indent=2))
     for split, ranges in meta["splits"].items():
