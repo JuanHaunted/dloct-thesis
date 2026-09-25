@@ -3,9 +3,13 @@ Evaluate a trained run on the test split (full B-scans) and write thesis-ready o
 
     python -m dloct.eval --run runs/unet_full [--ckpt best] [--split test] [--per-volume 32]
 
-Writes to ``<run>/eval_<split>/``: ``metrics.json``, ``metrics.md`` (one table per data
-source), ``mps.png`` (lateral spectra: is the fold undone?) and ``example_*.png`` comparison
-figures. Uses the EMA weights.
+Writes to ``<run>/eval_<split>_<ckpt>_snr<dB>/``: ``metrics.json`` (summary, CIs, paired tests,
+per-B-scan values), ``metrics.md`` (tables), ``mps.png`` (lateral spectra: is the fold
+undone?) and ``example_*.png`` comparison figures. Uses the EMA weights.
+
+Uncertainty: means carry two 95% bootstrap CIs, over B-scans (optimistic: neighbouring B-scans
+are correlated) and over volumes (honest, wide with few volumes). Each method is compared with
+interpolation by paired Wilcoxon signed-rank tests, Holm-corrected; see ``dloct.stats``.
 """
 
 import argparse
@@ -18,7 +22,8 @@ import torch
 import yaml
 
 from .data import EvalBScans
-from .evaluation import amp_dtype, bootstrap_ci, evaluate
+from .evaluation import amp_dtype, evaluate, metric_keys
+from .stats import bootstrap_ci, cluster_bootstrap_ci, comparison_table, paired_comparison
 from .models.reconstructors import build_model
 from .sampling_analysis import compute_spectral_halfwidth
 from .visualize import comparison_figure, mps_figure
@@ -31,6 +36,13 @@ AMPLITUDE_COLUMNS = [
 COMPLEX_COLUMNS = [
     ("nrmse", "cNRMSE ↓"), ("rho_global", "\\|ρ\\| ↑"), ("rho_local", "\\|ρ\\| local ↑"),
 ]
+REALISM_COLUMNS = [
+    ("hist_sim", "HistSim ↑"), ("speckle_contrast", "speckle contrast"),
+    ("identity_ssim", "SSIM vs input (1 = unchanged)"),
+]
+DECILE_COLUMNS = [(f"coh_d{i}", f"d{i}") for i in range(1, 11)]
+TESTED_METRICS = ["psnr_db_tissue", "ssim_db_tissue", "hist_sim", "unmeasured_db_bias", "nrmse",
+                  "rho_local", "wpc", "ccc", "pg_ssim", "phase_err_w_rad", "dphase_err_rad"]
 PHASE_COLUMNS = [
     ("wpc", "WPC ↑"), ("ccc", "CCC ↑"), ("pg_ssim", "PG-SSIM ↑"),
     ("phase_err_w_rad", "φ err [rad] ↓"), ("dphase_err_rad", "Δφ err [rad] ↓"),
@@ -105,8 +117,13 @@ def main():
     summary, per_sample, examples, spectra, records = evaluate(
         model, ds, K, device, args.snr_db, amp_dtype=amp_dtype(cfg["train"].get("precision", "auto")),
         keep=args.examples, return_records=True)
-    ci = {method: {k: bootstrap_ci([m[k] for _, mt, m in records if mt == method]) for k in summary[method]}
-          for method in summary}
+    by_method = {m: [r for r in records if r["method"] == m] for m in summary}
+    keys = metric_keys(records[0])
+    ci = {m: {k: bootstrap_ci([r[k] for r in rs]) for k in keys} for m, rs in by_method.items()}
+    ci_vol = {m: {k: cluster_bootstrap_ci([r[k] for r in rs], [r["volume"] for r in rs]) for k in keys}
+              for m, rs in by_method.items()}
+    tests = {m: paired_comparison(by_method["interpolation"], rs, TESTED_METRICS)
+             for m, rs in by_method.items() if m != "interpolation"}
 
     out = run / f"eval_{args.split}_{args.ckpt}_snr{args.snr_db:g}"
     out.mkdir(exist_ok=True)
@@ -114,18 +131,27 @@ def main():
     spectral = spectral_recovery(spectra, K)
     (out / "metrics.json").write_text(json.dumps(dict(
         step=ck["step"], ckpt=args.ckpt, split=args.split, n_bscans=len(ds), factor=K,
-        summary=summary, ci95=ci, per_sample=per_sample, mps_halfwidth_1pct=halfwidth, spectral=spectral,
-        per_bscan=[dict(sample=s, method=mt, **m) for s, mt, m in records]), indent=2))
+        summary=summary, ci95_bscan=ci, ci95_volume=ci_vol, tests_vs_interpolation=tests,
+        per_sample=per_sample, mps_halfwidth_1pct=halfwidth, spectral=spectral, per_bscan=records), indent=2))
 
     md = [f"# {cfg['name']} — {args.split} (K={K}, {len(ds)} B-scans, step {ck['step']}, {args.ckpt}, "
           f"phase metrics at SNR >= {args.snr_db:g} dB, {summary['interpolation']['mask_fraction']:.0%} of pixels)",
-          "", "Mean over B-scans [95% bootstrap CI].", "",
+          "", f"Mean over B-scans [95% bootstrap CI over volumes, n={len(set(r['volume'] for r in records))}]. "
+          "Volume-level CIs are wide by design: B-scans of one volume are correlated.", "",
           "Amplitude in dB. 'tissue' = pixels ≥ SNR threshold above the noise floor; 'image' = all",
           "pixels, dominated by background noise. Ground-truth unmeasured/measured power ≈ "
           f"{summary['interpolation'].get('unmeasured_power_ratio_gt', float('nan')):.3f}.", "",
-          "## All: amplitude", "", markdown_table(summary, AMPLITUDE_COLUMNS, ci),
-          "", "## All: complex field", "", markdown_table(summary, COMPLEX_COLUMNS, ci),
-          "", "## All: phase", "", markdown_table(summary, PHASE_COLUMNS, ci)]
+          "## All: amplitude", "", markdown_table(summary, AMPLITUDE_COLUMNS, ci_vol),
+          "", "## All: complex field", "", markdown_table(summary, COMPLEX_COLUMNS, ci_vol),
+          "", "## All: phase", "", markdown_table(summary, PHASE_COLUMNS, ci_vol),
+          "", "## All: realism", "", markdown_table(summary, REALISM_COLUMNS, ci_vol),
+          "", "## Phase coherence by ground-truth amplitude decile (d1 = weakest, d10 = strongest)", "",
+          markdown_table(summary, DECILE_COLUMNS)]
+    for m, rows in tests.items():
+        md += ["", f"## Paired test: {m} vs interpolation", "",
+               "Wilcoxon signed-rank, two-sided, Holm-corrected across the metrics below. The volume-level",
+               "test uses per-volume means (conservative; with n volumes the smallest possible p is 2/2^n).", "",
+               comparison_table(rows)]
     for sample, s in sorted(per_sample.items()):
         md += ["", f"## {sample}", "", markdown_table(s, AMPLITUDE_COLUMNS), "",
                markdown_table(s, COMPLEX_COLUMNS), "", markdown_table(s, PHASE_COLUMNS)]
