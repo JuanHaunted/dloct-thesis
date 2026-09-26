@@ -74,6 +74,36 @@ Per-volume coherence diagnostics are in `meta.json` on the cluster and summarize
 
 ## Results
 
+### `cascade_full` vs `unet_full`: test (5 volumes, 160 B-scans)
+
+Source: `runs/cascade_full/eval_test_best_snr10/` (best checkpoint, step 37.5k) and
+`compare_unet_full_model_vs_cascade_full_model.md` there. Paired Wilcoxon, Holm-corrected.
+
+| metric | interpolation | unet_full | cascade_full | Δ cascade − unet [95% CI by volume] | cascade better on | p (Holm) |
+|---|---:|---:|---:|---:|---:|---:|
+| PSNR tissue ↑ | 20.13 | 21.19 | 21.39 | +0.20 [+0.13, +0.27] | 98% | 1e-26 |
+| SSIM tissue ↑ | 0.572 | 0.670 | 0.673 | +0.004 [+0.001, +0.006] | 79% | 1e-14 |
+| WPC ↑ | 0.790 | 0.833 | 0.830 | −0.003 [−0.005, +0.000] | 31% | 2e-11 |
+| CCC ↑ | 0.740 | 0.790 | 0.788 | −0.001 [−0.004, +0.001] | 64% | 0.43 |
+| PG-SSIM ↑ | 0.200 | 0.212 | 0.215 | +0.003 [+0.000, +0.005] | 67% | 7e-14 |
+| phase error [rad] ↓ | 0.394 | 0.356 | 0.355 | −0.001 [−0.003, +0.002] | 71% | 7e-4 |
+| Δφ error [rad] ↓ | 0.408 | 0.385 | 0.385 | +0.000 [−0.002, +0.002] | 57% | 0.43 |
+| complex NRMSE ↓ | 0.754 | 0.641 | 0.644 | +0.003 [−0.001, +0.008] | 59% | 0.31 |
+| HistSim ↑ | 0.9996 | 0.854 | 0.826 | −0.027 [−0.035, −0.020] | 0% | 6e-27 |
+| unmeasured/measured power (GT 1.007) | 0.790 | 0.425 | 0.448 | | | |
+| out-of-band energy recovered | 0.000 | 0.270 | 0.280 | | | |
+
+Decision rule (cascade as candidate, unet as reference): **does not pass**. Tissue PSNR improves
+slightly, but there is no significant WPC/CCC gain (WPC is marginally better for the U-Net).
+Training cost is ~3.5× the U-Net's.
+
+**Interpretation:** at K=2 the two architectures are equivalent. The exact data-consistency
+layers add nothing, because the single-shot U-Net already reproduces the measured A-lines (DC at
+inference changes nothing). Both hit the same predictability limit on the missing A-lines and share
+the same realism deficit (dark fill-in, smoothed noise). The limit is the information in the data,
+not the architecture. Hypothesis to test: the cascade may matter more at K=4, where the missing
+lines are further from any measurement.
+
 ### `unet_full`: final test evaluation (authoritative)
 
 Source: `runs/unet_full/eval_test_best_snr10/metrics.md` (best checkpoint, step 32.5k; duplicates
@@ -189,7 +219,7 @@ Best at step 32.5k. Phase metrics overfit after ~35k steps while amplitude keeps
 
 ### Pending
 
-- [ ] `cascade_full` training (about 19 h total), then evaluation
+- [x] `cascade_full` training and evaluation (equivalent to unet_full; see above)
 - [ ] `unet_magnitude`, `unet_complex` training and evaluation
 - [ ] Re-run `unet_full` evaluation to get the out-of-band spectral recovery numbers (optional)
 - [x] Before/after figure for `unet_full`: `runs/unet_full/figures/` (revealed the caveat above)
