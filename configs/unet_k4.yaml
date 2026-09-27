@@ -1,0 +1,6 @@
+# K=4 (keep every 4th A-line): missing lines are up to 2 A-lines from any measurement. Tests whether
+# the gap between the single-shot U-Net and the physics-informed cascade opens at a harder factor.
+defaults: base.yaml
+name: unet_full_k4
+data: {factor: 4}
+optim: {steps: 40000}

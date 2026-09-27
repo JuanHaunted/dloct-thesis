@@ -1,0 +1,5 @@
+# K=4 counterpart of unet_k4 for the unrolled data-consistency cascade.
+defaults: cascade_full.yaml
+name: cascade_full_k4
+data: {factor: 4}
+optim: {steps: 40000}

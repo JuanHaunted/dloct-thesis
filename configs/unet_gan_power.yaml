@@ -1,0 +1,6 @@
+# Discriminator + power-match together, fine-tuned from unet_full: power-match restores amplitude
+# fidelity on the unmeasured A-lines without changing phase, the discriminator restores realism
+# (histogram, high frequencies). Same 20k-step schedule as the other fine-tunes.
+defaults: unet_gan.yaml
+name: unet_gan_power
+loss: {power_match: 0.1}
