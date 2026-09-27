@@ -127,6 +127,19 @@ Findings:
 6. Extra training alone (`*_ft` vs parents) changes little: tissue PSNR ±0.1–0.2 dB, phase
    essentially unchanged.
 
+### Figures (for the thesis)
+
+`python scripts/make_figures.py` writes PNG + PDF to `runs/figures/`. Encoding is fixed across all
+figures: colour = training variant (blue base, orange + discriminator, aqua + power-match, green
++ D + power, yellow amplitude-only, magenta no phase terms), marker = architecture (circle U-Net,
+square cascade, diamond interpolation), grey = interpolation.
+- `tradeoff`: tissue PSNR vs φ error, and HistSim vs Δφ error; means with volume-level 95% CIs.
+- `boxplots`: per-B-scan distributions of six metrics across all models.
+- `deciles`: phase coherence by amplitude decile, absolute and as gain over interpolation.
+- `qual_amplitude_<sample>` / `qual_phase_<sample>`: every model on the same B-scan, as in the
+  internal reference paper (amplitude with two zooms; axial and lateral phase-difference maps). They
+  need `runs/figures/recon_<sample>.npz` from `scripts/dump_reconstructions.py`, run on Apolo.
+
 ### Round 3 (queued 2026-09-27)
 
 - `unet_gan_power` (adv 0.01 + power-match 0.1) and `unet_gan_power_lo` (adv 0.003 + power 0.1):
