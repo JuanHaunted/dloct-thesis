@@ -33,7 +33,7 @@ MODELS = [
     ("U-Net + D", "unet_gan", "latest"),
     ("Cascade + D", "cascade_gan", "latest"),
     ("U-Net + power", "unet_power", "latest"),
-    ("U-Net + D + power", "unet_gan_power", "latest"),
+    ("U-Net + weak D + power", "unet_gan_power_lo", "latest"),   # recommended realism model
     ("U-Net amplitude-only", "unet_magnitude", "best"),
 ]
 
