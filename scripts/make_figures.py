@@ -27,6 +27,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.ticker
 import numpy as np
 from matplotlib.patches import Rectangle
 
@@ -43,6 +44,7 @@ VARIANT_COLOR = {
     "magnitude": "#eda100",      # yellow
     "no_phase": "#e87ba4",       # magenta
     "gan_power": "#008300",      # green
+    "gan_power_lo": "#4a3aa7",   # violet
 }
 ARCH_MARKER = {"unet": "o", "cascade": "s", "none": "D"}
 
@@ -55,6 +57,7 @@ MODELS = [
     ("Cascade + D", "cascade_gan", "latest", "model", "gan", "cascade"),
     ("U-Net + power", "unet_power", "latest", "model", "power", "unet"),
     ("U-Net + D + power", "unet_gan_power", "latest", "model", "gan_power", "unet"),
+    ("U-Net + weak D + power", "unet_gan_power_lo", "latest", "model", "gan_power_lo", "unet"),
     ("U-Net amplitude-only", "unet_magnitude", "best", "model", "magnitude", "unet"),
     ("U-Net no phase terms", "unet_complex", "best", "model", "no_phase", "unet"),
 ]
@@ -107,27 +110,18 @@ def save(fig, out: Path, name: str):
     print(f"wrote {out / name}.png/.pdf")
 
 
-# Label placement per panel: (dx, dy) in points from the marker, with a leader line. Models
-# cluster tightly, so offsets are set by hand to keep every label clear of the others.
-LABEL_OFFSETS = {
-    "amp_phase": {"Interpolation": (0, -22), "U-Net": (-40, 26), "Cascade": (30, 30),
-                  "U-Net no phase terms": (40, -26), "U-Net + D": (-10, -30), "Cascade + D": (-30, 28),
-                  "U-Net + power": (0, 22), "U-Net + D + power": (30, -22), "U-Net amplitude-only": (-60, 16)},
-    "real_dphi": {"Interpolation": (-20, -24), "U-Net": (0, 26), "Cascade": (-40, 22),
-                  "U-Net no phase terms": (-30, -26), "U-Net + D": (-50, 24), "Cascade + D": (-70, 8),
-                  "U-Net + power": (20, -26), "U-Net + D + power": (-60, -14), "U-Net amplitude-only": (30, 12)},
-}
+NUMBER_OFFSET = {"U-Net + D": (-11, 5)}   # keeps its number clear of Cascade + D
 
 
-def point(ax, m, x, y, xerr, yerr, offset):
+def point(ax, m, x, y, xerr, yerr, number, nudge=True):
+    """Marker with volume-level CI whiskers and a small number keyed to the legend below."""
     c = color_of(m["variant"])
     ax.errorbar(x, y, xerr=[[x - xerr[0]], [xerr[1] - x]], yerr=[[y - yerr[0]], [yerr[1] - y]],
                 fmt="none", ecolor=c, elinewidth=1, alpha=0.45, zorder=2)
     ax.scatter([x], [y], s=64, marker=ARCH_MARKER[m["arch"]], color=c, edgecolors=SURFACE,
                linewidths=2, zorder=3)
-    ax.annotate(m["label"], (x, y), xytext=offset, textcoords="offset points", fontsize=8,
-                color=INK_2, ha="center", va="center", zorder=4,
-                arrowprops=dict(arrowstyle="-", color=INK_2, linewidth=0.6, shrinkA=2, shrinkB=5))
+    ax.annotate(str(number), (x, y), xytext=NUMBER_OFFSET.get(m["label"], (5, 5)) if nudge else (5, 5), textcoords="offset points", fontsize=7.5,
+                color=INK, zorder=4, fontweight="semibold")
 
 
 def fig_tradeoff(models, out):
@@ -140,18 +134,43 @@ def fig_tradeoff(models, out):
         for m in models:
             x, xlo, xhi = mean_ci(m, xm)
             y, ylo, yhi = mean_ci(m, ym)
-            point(ax, m, x, y, (xlo, xhi), (ylo, yhi), LABEL_OFFSETS[key].get(m["label"], (0, 20)))
+            point(ax, m, x, y, (xlo, xhi), (ylo, yhi), models.index(m) + 1)
         ax.margins(x=0.12, y=0.12)
+        if key == "real_dphi":
+            # Models with a discriminator and interpolation all sit at HistSim ≈ 1: zoom in.
+            near = [m for m in models if mean_ci(m, xm)[0] > 0.99]
+            if len(near) > 1:
+                ins = ax.inset_axes([0.50, 0.30, 0.40, 0.42])
+                for m in near:
+                    x, _, _ = mean_ci(m, xm)
+                    y, _, _ = mean_ci(m, ym)
+                    point(ins, m, x, y, (x, x), (y, y), models.index(m) + 1, nudge=False)
+                xs = [mean_ci(m, xm)[0] for m in near]
+                ys = [mean_ci(m, ym)[0] for m in near]
+                ins.set_xlim(min(xs) - 0.0006, max(xs) + 0.0006)
+                ins.set_ylim(max(ys) + 0.004, min(ys) - 0.004)
+                ins.tick_params(labelsize=6.5)
+                ins.xaxis.set_major_locator(matplotlib.ticker.MaxNLocator(3))
+                ins.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(3))
+                ins.set_title("zoom: HistSim ≈ 1 (CIs omitted)", fontsize=7.5, loc="left", fontweight="normal")
+                for sp in ins.spines.values():
+                    sp.set_visible(True)
+                    sp.set_edgecolor(INK_2)
+                    sp.set_linewidth(0.6)
+                ax.indicate_inset_zoom(ins, edgecolor=INK_2, alpha=0.6)
         ax.set_xlabel(xl)
         ax.set_ylabel(yl)
         ax.set_title(title, loc="left")
         ax.invert_yaxis()   # up = better phase
-    handles = [plt.Line2D([], [], marker=ARCH_MARKER[a], linestyle="", color=INK_2, markersize=7, label=l)
-               for a, l in (("none", "no network"), ("unet", "U-Net"), ("cascade", "DC cascade"))]
-    fig.legend(handles=handles, loc="lower center", ncol=3, bbox_to_anchor=(0.5, -0.04))
+    # Points cluster tightly, so each carries a number keyed here (colour = variant, shape = architecture).
+    handles = [plt.Line2D([], [], marker=ARCH_MARKER[m["arch"]], linestyle="", color=color_of(m["variant"]),
+                          markeredgecolor=SURFACE, markersize=8, label=f"{k}  {m['label']}")
+               for k, m in enumerate(models, start=1)]
+    fig.legend(handles=handles, loc="lower center", ncol=5, bbox_to_anchor=(0.5, -0.10), fontsize=8,
+               handletextpad=0.3, columnspacing=1.4)
     fig.suptitle("Test set (5 volumes): means with 95% CIs over volumes. Up and right is better.",
                  x=0.01, ha="left", fontsize=9, color=INK_2)
-    fig.tight_layout(rect=(0, 0.04, 1, 0.97))
+    fig.tight_layout(rect=(0, 0.06, 1, 0.97))
     save(fig, out, "tradeoff")
 
 
@@ -187,7 +206,7 @@ def fig_boxplots(models, out):
 
 def fig_deciles(models, out):
     keep = [m for m in models if m["label"] in
-            ("Interpolation", "U-Net", "U-Net + D", "U-Net + power", "U-Net amplitude-only", "U-Net + D + power")]
+            ("Interpolation", "U-Net", "U-Net + D", "U-Net + power", "U-Net amplitude-only", "U-Net + weak D + power")]
     x = np.arange(1, 11)
     curves = {m["label"]: np.array([np.nanmean([r[f"coh_d{i}"] for r in m["records"]]) for i in x]) for m in keep}
     base = curves["Interpolation"]
