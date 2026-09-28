@@ -17,6 +17,15 @@ keep every K-th A-line (K=2, no anti-alias filter), sinc-interpolate back to the
 - **Loss:** complex Charbonnier + 0.1 log-amplitude L1 + 0.1 amplitude-weighted (1−cos Δφ) +
   0.1 inter-A-line phase-difference term + 0.01 lateral-spectrum L1.
 
+**Undersampling setup (describe exactly this in the text):** only the **fast lateral axis (X, A-lines
+within a B-scan)** is undersampled, on the fly in `physics.measure`. Every K-th A-line is kept, with no
+anti-alias filter, and the rest is sinc-interpolated back to full width; the start A-line is random per
+training batch and 0 at evaluation. The **slow axis (Y, between B-scans) is never undersampled**: every
+B-scan is used and each is reconstructed independently (2D). Data preparation does not undersample; it
+only reorders, bulk-phase corrects along X and normalizes. Slow-axis undersampling is future work: it
+needs a cross-B-scan model, and in-vivo B-scans are nearly uncorrelated along Y (fovea raw
+correlation ≈ 0.008), likely from eye motion.
+
 ## Key decisions (with reasons)
 
 | Decision | Reason |
