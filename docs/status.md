@@ -139,6 +139,9 @@ square cascade, diamond interpolation), grey = interpolation.
 - `qual_amplitude_<sample>` / `qual_phase_<sample>`: every model on the same B-scan, as in the
   internal reference paper (amplitude with two zooms; axial and lateral phase-difference maps). They
   need `runs/figures/recon_<sample>.npz` from `scripts/dump_reconstructions.py`, run on Apolo.
+  Rendered 2026-09-28 for Fovea5, Nail and OpticNerve4 with: ground truth, interpolation, U-Net,
+  cascade, U-Net + D, cascade + D, U-Net + power, U-Net + weak D + power (recommended realism model),
+  U-Net amplitude-only.
 
 ### Round 3 results (2026-09-28)
 
