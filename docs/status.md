@@ -1,6 +1,6 @@
 # Project status
 
-_Maintained by the programming agent. Last updated 2026-09-27 (adversarial and ablation results)._
+_Maintained by the programming agent. Last updated 2026-09-28 (round 3: combined models, K=4, figures)._
 
 ## Problem and approach
 
@@ -140,12 +140,48 @@ square cascade, diamond interpolation), grey = interpolation.
   internal reference paper (amplitude with two zooms; axial and lateral phase-difference maps). They
   need `runs/figures/recon_<sample>.npz` from `scripts/dump_reconstructions.py`, run on Apolo.
 
-### Round 3 (queued 2026-09-27)
+### Round 3 results (2026-09-28)
 
-- `unet_gan_power` (adv 0.01 + power-match 0.1) and `unet_gan_power_lo` (adv 0.003 + power 0.1):
-  can realism (discriminator) and amplitude fidelity (power-match) be combined, keeping phase?
-- `unet_full_k4`, `cascade_full_k4` (K=4, 40k steps each): does the physics-informed cascade beat
-  the U-Net when missing lines are further from the measurements?
+**Discriminator + power-match** (fine-tunes of unet_full, `latest`; test, 5 volumes, 160 B-scans):
+
+| run | PSNR tissue | SSIM tissue | HistSim | missing-line power | bias [dB] | φ err [rad] | Δφ err [rad] | WPC | CCC | out-of-band |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| interpolation | 20.13 | 0.572 | 0.9996 | 0.79 | −3.22 | 0.394 | 0.408 | 0.790 | 0.740 | 0.000 |
+| unet_ft (control) | 21.23 | 0.672 | 0.847 | 0.41 | −4.76 | 0.357 | 0.388 | 0.833 | 0.790 | 0.282 |
+| unet_power | 23.68 | 0.680 | 0.868 | 0.65 | −2.23 | 0.357 | 0.388 | 0.795 | 0.768 | 0.263 |
+| unet_gan (D 0.01) | 20.12 | 0.588 | 0.999 | 0.66 | −3.59 | 0.361 | 0.392 | 0.807 | 0.762 | 0.358 |
+| unet_gan_power (D 0.01 + power) | 20.38 | 0.592 | 0.999 | 0.68 | −3.34 | 0.359 | 0.391 | 0.803 | 0.760 | 0.375 |
+| unet_gan_power_lo (D 0.003 + power) | 20.65 | 0.606 | 0.998 | 0.66 | −3.26 | 0.358 | 0.389 | 0.806 | 0.766 | 0.312 |
+
+- Adding power-match to the discriminator does **not** recover the amplitude of power-match alone
+  (20.4–20.6 vs 23.7 dB). The discriminator dominates: realistic but not ground-truth speckle, so
+  pixel-wise PSNR pays (perception–distortion).
+- `unet_gan_power_lo` is the **best compromise**: near-perfect realism (HistSim 0.998), phase almost
+  unchanged vs its control (φ error +0.0009, +0.25%; Δφ +0.4%), tissue PSNR −0.58 dB vs control
+  (volume CI [−1.57, +0.35], n.s. by volume). Against interpolation it **passes the decision rule**:
+  PSNR tissue +0.52 dB, φ error −9%, Δφ −5%, WPC +0.016, CCC +0.026, all Holm p < 1e-25.
+- For the thesis, two end points: **`unet_power` = best accuracy** (best amplitude and best phase);
+  **`unet_gan_power_lo` = best realism** at almost no phase cost.
+
+**K=4** (keep every 4th A-line; `best` checkpoints: unet 40k = final step, still improving;
+cascade 32.5k; test, 5 volumes):
+
+| K=4 | interpolation | unet_full_k4 | cascade_full_k4 | cascade − unet |
+|---|---:|---:|---:|---:|
+| φ error [rad] | 0.773 | 0.737 | 0.736 | −0.001 (p = 0.25 n.s.) |
+| Δφ error [rad] | 0.502 | 0.486 | 0.486 | +0.001 (n.s.) |
+| WPC / CCC | 0.563 / 0.497 | 0.625 / 0.567 | 0.624 / 0.567 | tie (p = 0.77) |
+| complex NRMSE | 1.028 | 0.859 | 0.858 | tie |
+| PSNR / SSIM tissue | 17.89 / 0.317 | 18.32 / 0.410 | 18.36 / 0.412 | +0.04 / +0.002 |
+| out-of-band energy | 0 | 0.183 | 0.193 | |
+
+- K=4 is much harder: phase error roughly doubles vs K=2 for all methods.
+- The U-Net still beats interpolation on every complex/phase metric (WPC +0.063, CCC +0.070, cNRMSE
+  −16%, φ −4.7%, Δφ −3.2%; Holm p < 1e-24). The tissue-PSNR gain (+0.43 dB) is not significant by volume.
+- **The cascade does not beat the U-Net at K=4 either.** The hypothesis that the physics layers help
+  at a harder factor is **rejected**. DC at inference is again negligible. Conclusion for both K:
+  with exact decimation, data-consistency layers add nothing beyond a single network; the limit is
+  how predictable the missing A-lines are.
 
 ### `cascade_full` vs `unet_full`: test (5 volumes, 160 B-scans)
 
