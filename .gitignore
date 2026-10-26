@@ -27,3 +27,6 @@ slurm-*.out
 .vscode/
 .claude/settings.local.json
 apolo_report.txt
+
+# Thesis drafts and reference documents (local only, never on GitHub)
+thesis/
