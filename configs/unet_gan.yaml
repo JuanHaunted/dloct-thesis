@@ -1,0 +1,5 @@
+# Adversarial fine-tuning of unet_full: conditional PatchGAN on dB amplitude (speckle realism),
+# hinge loss. Same schedule as unet_ft; the only difference is the discriminator.
+defaults: unet_ft.yaml
+name: unet_gan
+adv: {weight: 0.01, mode: amplitude, lr: 1.0e-4, start_step: 0, base: 64, n_layers: 3}

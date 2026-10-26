@@ -1,0 +1,5 @@
+# As unet_gan_power with a weaker discriminator (0.003 instead of 0.01): unet_gan lost ~1.1 dB
+# tissue PSNR, which suggests 0.01 is on the strong side.
+defaults: unet_gan_power.yaml
+name: unet_gan_power_lo
+adv: {weight: 0.003}

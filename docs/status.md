@@ -1,0 +1,378 @@
+# Project status
+
+_Maintained by the programming agent. Last updated 2026-09-28 (round 3: combined models, K=4, figures)._
+
+## Problem and approach
+
+Reconstruct laterally undersampled **complex** OCT B-scans (amplitude and phase). Measurement:
+keep every K-th A-line (K=2, no anti-alias filter), sinc-interpolate back to the full grid
+(`src/dloct/physics.py`). Networks see Re/Im plus a mask of the measured A-lines.
+
+- **Model A: `unet_full`.** Single-shot ConvNeXt U-Net (8.7M parameters), residual on the
+  interpolated measurement. Data consistency (re-inserting the measured A-lines) is applied only at inference.
+- **Model B: `cascade_full`.** Unrolled physics-informed cascade: 5 × (small U-Net → exact data
+  consistency), trained end to end through the DC layers.
+- **Ablations:** `unet_magnitude` (amplitude-only L1, as prior work does) and `unet_complex`
+  (no explicit phase terms).
+- **Loss:** complex Charbonnier + 0.1 log-amplitude L1 + 0.1 amplitude-weighted (1−cos Δφ) +
+  0.1 inter-A-line phase-difference term + 0.01 lateral-spectrum L1.
+
+**Undersampling setup (describe exactly this in the text):** only the **fast lateral axis (X, A-lines
+within a B-scan)** is undersampled, on the fly in `physics.measure`. Every K-th A-line is kept, with no
+anti-alias filter, and the rest is sinc-interpolated back to full width; the start A-line is random per
+training batch and 0 at evaluation. The **slow axis (Y, between B-scans) is never undersampled**: every
+B-scan is used and each is reconstructed independently (2D). Data preparation does not undersample; it
+only reorders, bulk-phase corrects along X and normalizes. Slow-axis undersampling is future work: it
+needs a cross-B-scan model, and in-vivo B-scans are nearly uncorrelated along Y (fovea raw
+correlation ≈ 0.008), likely from eye motion.
+
+## Key decisions (with reasons)
+
+| Decision | Reason |
+|---|---|
+| No cold diffusion | Earlier attempts corrupted signals. Lit review: modest gains over DC cascades, and stochastic diffusion hallucinates speckle phase |
+| Real tomograms only | User's choice. Phantoms are not representative |
+| Bulk-phase correction in preprocessing | Raw A-lines have random phase offsets (motion/trigger jitter): lag-2 complex correlation ≈ 0.03–0.07 raw, 0.12–0.55 corrected. Without it, missing-A-line phase is unpredictable |
+| K=2 (not 4) | Data are at lateral Nyquist (K* ≈ 1). After correction, lag-4 correlation is only 0.02–0.18 on in-vivo samples |
+| Linear per-volume normalization (P99.9) | The forward operator is linear, and log compression would break it |
+| Log-amplitude loss term | Without it, the unmeasured A-lines came out ~10 dB too dark (conditional-mean shrinkage) |
+| Per-sample split, A/B channels together | Prevents leakage between the two channels of one acquisition |
+| Per-sample balanced patch sampling | Four ~1000-B-scan volumes would otherwise dominate training |
+| Phase metrics at ≥ 10 dB above noise floor | A fixed −30 dB mask counted 88% of fovea pixels (mostly noise) as tissue |
+
+## Statistical methodology (from 2026-09-25)
+
+- Per-B-scan metrics, paired across methods by (volume, B-scan index).
+- **Two 95% bootstrap CIs:** over B-scans (optimistic, since neighbouring B-scans are correlated)
+  and over volumes (per-volume means resampled; honest but wide with 6 test volumes). A/B channels of
+  one sample are still correlated with each other, so even the volume CI is somewhat optimistic.
+- **Significance:** paired two-sided Wilcoxon signed-rank tests, Holm–Bonferroni-corrected across
+  the tested metrics. They are run over B-scan pairs and over per-volume means. The volume-level
+  test is conservative: with 6 volumes the smallest possible p is 0.031, so after Holm correction it
+  cannot reach 0.05. Report it as descriptive.
+- **Pre-registered decision rule** for "model B is better than model A" (`dloct.compare`): B
+  improves the main metric (tissue PSNR), no phase metric (WPC, CCC, PG-SSIM) degrades by more than
+  5%, and WPC or CCC improves with Holm-adjusted p < 0.05.
+- **Extra diagnostics:** HistSim (amplitude histogram similarity), phase coherence by amplitude
+  decile, SSIM between output and input (identity-collapse check).
+- The CIs quoted in the `unet_full` test table below are the older B-scan-level ones; re-evaluation
+  will add volume-level CIs and the tests.
+
+## Data
+
+**Duplicate volume (found 2026-09-25):** `Fovea5A.npy` and `Fovea5B.npy` give byte-for-byte
+identical metrics on every evaluated B-scan, so they hold the same data. The group's own
+evaluation code also excludes a duplicated volume. Consequences:
+- No leakage: both are in the test split, same sample.
+- The test set has **5 distinct volumes**, not 6. Numbers below with "5 volumes" exclude Fovea5B.
+- Training may contain duplicates too. They don't bias sampling (balancing is per sample), but
+  the training set is smaller than it looks. `scripts/check_data.py` now lists byte-identical
+  files, and `prepare_data` excludes them from all splits. This needs checking on Apolo.
+
+29 files = 15 samples (A/B channels grouped), from two systems: retina/optic nerve on the
+ophthalmic SS-OCT, and the other tissues on the benchtop system.
+
+| Split | Samples |
+|---|---|
+| train | ChickenBreast, Fovea1–3, OpticNerve1–2, OpticNerveNew, OpticNerveOld, S.Eye2, unpairCadaverhearth (10 samples, 19 volumes) |
+| val | Fovea4, OpticNerve3 |
+| test | Fovea5, OpticNerve4, Nail (Nail = tissue type unseen in training); 5 volumes (Fovea5B is a duplicate, excluded) |
+
+Per-volume coherence diagnostics are in `meta.json` on the cluster and summarized in
+`docs/data_findings.md` (local sample only).
+
+## Results
+
+### Round 2: adversarial fine-tunes, controls and ablations (test, 5 volumes, 160 B-scans)
+
+Sources: `runs/<run>/eval_test_{latest|best}_snr10/metrics.md`. Fine-tunes use `latest` (20k
+steps from the parent's best checkpoint); ablations use `best` (40k-step runs). Paired comparisons:
+`python -m dloct.compare`. All differences quoted below are significant (Holm p < 1e-14 over
+B-scans) unless marked n.s.
+
+| run | PSNR tissue | SSIM tissue | HistSim | missing-line power (GT 1.0) | bias [dB] | out-of-band energy | φ err [rad] | Δφ err [rad] | WPC | CCC | PG-SSIM |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| interpolation | 20.13 | 0.572 | 0.9996 | 0.79 | −3.22 | 0.000 | 0.394 | 0.408 | 0.790 | 0.740 | 0.200 |
+| unet_full | 21.19 | 0.670 | 0.854 | 0.43 | −4.71 | 0.270 | 0.356 | 0.385 | 0.833 | 0.790 | 0.212 |
+| unet_ft (control) | 21.23 | 0.672 | 0.847 | 0.41 | −4.76 | 0.282 | 0.357 | 0.388 | 0.833 | 0.790 | 0.214 |
+| unet_power | 23.68 | 0.680 | 0.868 | 0.65 | −2.23 | 0.263 | 0.357 | 0.388 | 0.795 | 0.768 | 0.212 |
+| unet_gan | 20.12 | 0.588 | 0.999 | 0.66 | −3.59 | 0.358 | 0.361 | 0.392 | 0.807 | 0.762 | 0.207 |
+| cascade_full | 21.39 | 0.673 | 0.826 | 0.45 | −4.53 | 0.280 | 0.355 | 0.385 | 0.830 | 0.788 | 0.215 |
+| cascade_ft (control) | 21.25 | 0.672 | 0.824 | 0.42 | −4.69 | 0.289 | 0.354 | 0.385 | 0.832 | 0.790 | 0.216 |
+| cascade_gan | 20.17 | 0.591 | 0.999 | 0.65 | −3.58 | 0.400 | 0.359 | 0.389 | 0.806 | 0.763 | 0.204 |
+| unet_magnitude (ablation) | 23.56 | 0.693 | 0.815 | 0.52 | −2.95 | 0.885 | 0.543 | 0.720 | 0.711 | 0.685 | 0.223 |
+| unet_complex (ablation) | 21.29 | 0.676 | 0.832 | 0.40 | −4.83 | 0.266 | 0.359 | 0.387 | 0.832 | 0.789 | 0.215 |
+
+**Metric caveat (important for the text): WPC and CCC depend on the predicted amplitude.** CCC =
+|Σx̂x̄|/√(Σ|x̂|²Σ|x|²), and WPC weights by |x̂||x|. Raising the amplitude of pixels whose phase is only
+partly predictable lowers both, even if the phase angle is unchanged, so both reward the dark,
+hedged fill-in. Evidence: `unet_power` vs `unet_ft` leaves φ error (0.3568 vs 0.3568, p = 0.7 n.s.)
+and Δφ error (p = 0.7 n.s.) unchanged, yet WPC −0.038 and CCC −0.022. **φ error (weighted by
+ground-truth amplitude only) and Δφ error are the clean phase-angle metrics.** WPC and CCC measure
+complex-field coherence, amplitude included.
+
+Findings:
+1. **Amplitude-only training destroys phase (central claim).** `unet_magnitude` has the best
+   tissue PSNR of the plain models (23.56) but a phase **worse than interpolation**: φ error +38%
+   (0.543 vs 0.394), Δφ error +76% (0.720 vs 0.408), WPC 0.711 vs 0.790; worse on ≥ 94% of B-scans.
+   Its large out-of-band energy is amplitude texture with scrambled phase.
+2. **The discriminator restores realism, at a pixel-accuracy cost (perception–distortion
+   trade-off).** GAN vs its control, same for both networks: HistSim 0.85 → 0.999 (at the
+   measurement's level); out-of-band energy 0.28 → 0.36 (U-Net) and 0.29 → 0.40 (cascade), the most
+   of any phase-preserving model; missing-line power 0.41 → 0.66; bias −4.8 → −3.6 dB. Costs: tissue
+   PSNR −1.1 dB (back to interpolation level), SSIM tissue −0.08, and a small real phase cost (φ and
+   Δφ error +1.2%). WPC/CCC fall ~3%, partly from the amplitude effect above. The decision rule does
+   not pass: the main metric falls, although no phase metric degrades by more than 5%. Against
+   interpolation the GAN is still better on every phase metric (φ error −8%, Δφ −4%, WPC +0.017,
+   CCC +0.022; 90–99% of B-scans).
+3. **The power-match control gives the best amplitude with unchanged phase.** vs `unet_ft`: tissue
+   PSNR +2.45 dB [+1.71, +3.18 by volume] on 100% of B-scans, bias −4.76 → −2.23 dB, φ/Δφ error
+   unchanged (n.s.). WPC/CCC fall only through the amplitude effect.
+4. **The explicit phase terms help only a little.** `unet_complex` (no phase terms) vs `unet_full`:
+   φ error +0.0027 (+0.8%), Δφ +0.0024; significant but small. Most phase preservation comes from
+   supervising the complex field (complex Charbonnier) in a Re/Im representation.
+5. **Architecture:** the U-Net and the cascade behave the same under adversarial training too (see
+   the previous section).
+6. Extra training alone (`*_ft` vs parents) changes little: tissue PSNR ±0.1–0.2 dB, phase
+   essentially unchanged.
+
+### Figures (for the thesis)
+
+`python scripts/make_figures.py` writes PNG + PDF to `runs/figures/`. Encoding is fixed across all
+figures: colour = training variant (blue base, orange + discriminator, aqua + power-match, green
++ D + power, yellow amplitude-only, magenta no phase terms), marker = architecture (circle U-Net,
+square cascade, diamond interpolation), grey = interpolation.
+- `tradeoff`: tissue PSNR vs φ error, and HistSim vs Δφ error; means with volume-level 95% CIs.
+- `boxplots`: per-B-scan distributions of six metrics across all models.
+- `deciles`: phase coherence by amplitude decile, absolute and as gain over interpolation.
+- `qual_amplitude_<sample>` / `qual_phase_<sample>`: every model on the same B-scan, as in the
+  internal reference paper (amplitude with two zooms; axial and lateral phase-difference maps). They
+  need `runs/figures/recon_<sample>.npz` from `scripts/dump_reconstructions.py`, run on Apolo.
+  Rendered 2026-09-28 for Fovea5, Nail and OpticNerve4 with: ground truth, interpolation, U-Net,
+  cascade, U-Net + D, cascade + D, U-Net + power, U-Net + weak D + power (recommended realism model),
+  U-Net amplitude-only.
+
+### Round 3 results (2026-09-28)
+
+**Discriminator + power-match** (fine-tunes of unet_full, `latest`; test, 5 volumes, 160 B-scans):
+
+| run | PSNR tissue | SSIM tissue | HistSim | missing-line power | bias [dB] | φ err [rad] | Δφ err [rad] | WPC | CCC | out-of-band |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| interpolation | 20.13 | 0.572 | 0.9996 | 0.79 | −3.22 | 0.394 | 0.408 | 0.790 | 0.740 | 0.000 |
+| unet_ft (control) | 21.23 | 0.672 | 0.847 | 0.41 | −4.76 | 0.357 | 0.388 | 0.833 | 0.790 | 0.282 |
+| unet_power | 23.68 | 0.680 | 0.868 | 0.65 | −2.23 | 0.357 | 0.388 | 0.795 | 0.768 | 0.263 |
+| unet_gan (D 0.01) | 20.12 | 0.588 | 0.999 | 0.66 | −3.59 | 0.361 | 0.392 | 0.807 | 0.762 | 0.358 |
+| unet_gan_power (D 0.01 + power) | 20.38 | 0.592 | 0.999 | 0.68 | −3.34 | 0.359 | 0.391 | 0.803 | 0.760 | 0.375 |
+| unet_gan_power_lo (D 0.003 + power) | 20.65 | 0.606 | 0.998 | 0.66 | −3.26 | 0.358 | 0.389 | 0.806 | 0.766 | 0.312 |
+
+- Adding power-match to the discriminator does **not** recover the amplitude of power-match alone
+  (20.4–20.6 vs 23.7 dB). The discriminator dominates: realistic but not ground-truth speckle, so
+  pixel-wise PSNR pays (perception–distortion).
+- `unet_gan_power_lo` is the **best compromise**: near-perfect realism (HistSim 0.998), phase almost
+  unchanged vs its control (φ error +0.0009, +0.25%; Δφ +0.4%), tissue PSNR −0.58 dB vs control
+  (volume CI [−1.57, +0.35], n.s. by volume). Against interpolation it **passes the decision rule**:
+  PSNR tissue +0.52 dB, φ error −9%, Δφ −5%, WPC +0.016, CCC +0.026, all Holm p < 1e-25.
+- For the thesis, two end points: **`unet_power` = best accuracy** (best amplitude and best phase);
+  **`unet_gan_power_lo` = best realism** at almost no phase cost.
+
+**K=4** (keep every 4th A-line; `best` checkpoints: unet 40k = final step, still improving;
+cascade 32.5k; test, 5 volumes):
+
+| K=4 | interpolation | unet_full_k4 | cascade_full_k4 | cascade − unet |
+|---|---:|---:|---:|---:|
+| φ error [rad] | 0.773 | 0.737 | 0.736 | −0.001 (p = 0.25 n.s.) |
+| Δφ error [rad] | 0.502 | 0.486 | 0.486 | +0.001 (n.s.) |
+| WPC / CCC | 0.563 / 0.497 | 0.625 / 0.567 | 0.624 / 0.567 | tie (p = 0.77) |
+| complex NRMSE | 1.028 | 0.859 | 0.858 | tie |
+| PSNR / SSIM tissue | 17.89 / 0.317 | 18.32 / 0.410 | 18.36 / 0.412 | +0.04 / +0.002 |
+| out-of-band energy | 0 | 0.183 | 0.193 | |
+
+- K=4 is much harder: phase error roughly doubles vs K=2 for all methods.
+- The U-Net still beats interpolation on every complex/phase metric (WPC +0.063, CCC +0.070, cNRMSE
+  −16%, φ −4.7%, Δφ −3.2%; Holm p < 1e-24). The tissue-PSNR gain (+0.43 dB) is not significant by volume.
+- **The cascade does not beat the U-Net at K=4 either.** The hypothesis that the physics layers help
+  at a harder factor is **rejected**. DC at inference is again negligible. Conclusion for both K:
+  with exact decimation, data-consistency layers add nothing beyond a single network; the limit is
+  how predictable the missing A-lines are.
+
+### `cascade_full` vs `unet_full`: test (5 volumes, 160 B-scans)
+
+Source: `runs/cascade_full/eval_test_best_snr10/` (best checkpoint, step 37.5k) and
+`compare_unet_full_model_vs_cascade_full_model.md` there. Paired Wilcoxon, Holm-corrected.
+
+| metric | interpolation | unet_full | cascade_full | Δ cascade − unet [95% CI by volume] | cascade better on | p (Holm) |
+|---|---:|---:|---:|---:|---:|---:|
+| PSNR tissue ↑ | 20.13 | 21.19 | 21.39 | +0.20 [+0.13, +0.27] | 98% | 1e-26 |
+| SSIM tissue ↑ | 0.572 | 0.670 | 0.673 | +0.004 [+0.001, +0.006] | 79% | 1e-14 |
+| WPC ↑ | 0.790 | 0.833 | 0.830 | −0.003 [−0.005, +0.000] | 31% | 2e-11 |
+| CCC ↑ | 0.740 | 0.790 | 0.788 | −0.001 [−0.004, +0.001] | 64% | 0.43 |
+| PG-SSIM ↑ | 0.200 | 0.212 | 0.215 | +0.003 [+0.000, +0.005] | 67% | 7e-14 |
+| phase error [rad] ↓ | 0.394 | 0.356 | 0.355 | −0.001 [−0.003, +0.002] | 71% | 7e-4 |
+| Δφ error [rad] ↓ | 0.408 | 0.385 | 0.385 | +0.000 [−0.002, +0.002] | 57% | 0.43 |
+| complex NRMSE ↓ | 0.754 | 0.641 | 0.644 | +0.003 [−0.001, +0.008] | 59% | 0.31 |
+| HistSim ↑ | 0.9996 | 0.854 | 0.826 | −0.027 [−0.035, −0.020] | 0% | 6e-27 |
+| unmeasured/measured power (GT 1.007) | 0.790 | 0.425 | 0.448 | | | |
+| out-of-band energy recovered | 0.000 | 0.270 | 0.280 | | | |
+
+Decision rule (cascade as candidate, unet as reference): **does not pass**. Tissue PSNR improves
+slightly, but there is no significant WPC/CCC gain (WPC is marginally better for the U-Net).
+Training cost is ~3.5× the U-Net's.
+
+**Interpretation:** at K=2 the two architectures are equivalent. The exact data-consistency
+layers add nothing, because the single-shot U-Net already reproduces the measured A-lines (DC at
+inference changes nothing). Both hit the same predictability limit on the missing A-lines and share
+the same realism deficit (dark fill-in, smoothed noise). The limit is the information in the data,
+not the architecture. Hypothesis to test: the cascade may matter more at K=4, where the missing
+lines are further from any measurement.
+
+### `unet_full`: final test evaluation (authoritative)
+
+Source: `runs/unet_full/eval_test_best_snr10/metrics.md` (best checkpoint, step 32.5k; duplicates
+excluded; 5 volumes, 160 B-scans, 32 per volume). Brackets are **volume-level** 95% bootstrap CIs.
+Paired Wilcoxon over B-scans, Holm-corrected across 11 metrics: p ≤ 5.5e-21 for every metric.
+The volume-level test gives p = 0.69; with 5 volumes it cannot go below 0.0625, so it is descriptive.
+
+| metric | interpolation | unet_full | Δ [95% CI by volume] | B-scans improved |
+|---|---:|---:|---:|---:|
+| **Phase** | | | | |
+| WPC ↑ | 0.790 [0.769, 0.810] | 0.833 [0.817, 0.848] | +0.043 [+0.038, +0.048] | 100% |
+| CCC ↑ | 0.740 [0.726, 0.755] | 0.790 [0.776, 0.803] | +0.049 [+0.048, +0.051] | 100% |
+| PG-SSIM ↑ | 0.200 | 0.212 | +0.013 [+0.011, +0.015] | 98% |
+| phase error, amplitude-weighted [rad] ↓ | 0.394 | 0.356 | −0.038 [−0.044, −0.033] | 99% |
+| inter-A-line Δφ error [rad] ↓ | 0.408 | 0.385 | −0.023 [−0.028, −0.019] | 96% |
+| **Complex field** | | | | |
+| complex NRMSE ↓ | 0.754 | 0.641 | −0.113 [−0.121, −0.105] | 100% |
+| \|ρ\| local ↑ | 0.707 | 0.752 | +0.045 [+0.044, +0.047] | 100% |
+| **Amplitude, tissue only** | | | | |
+| PSNR tissue ↑ | 20.13 [19.90, 20.36] | 21.19 [20.05, 22.33] | +1.06 [+0.10, +2.03] | 87% |
+| SSIM tissue ↑ | 0.572 | 0.670 | +0.098 [+0.083, +0.114] | 100% |
+| **Realism / artifacts** | | | | |
+| HistSim (amplitude histogram) ↑ | 0.9996 | 0.854 | −0.146 [−0.185, −0.117] | 0% (worse) |
+| unmeasured A-line bias [dB] (→ 0) | −3.22 | −4.71 | \|bias\| +1.50 (worse) | 0% |
+| unmeasured/measured power (GT 1.007) | 0.790 | 0.425 | | |
+| SSIM output vs input (identity check) | 1.000 | 0.699 | not collapsed to identity | |
+| **Spectrum** | | | | |
+| out-of-band energy recovered | 0.000 | 0.270 | | |
+| out-of-band / in-band spectral error [dB] | 52.7 / 1.60 | 6.4 / 0.75 | | |
+
+Per sample, tissue PSNR interpolation → model: Fovea5 20.44 → 20.88 (+0.4), Nail 20.26 → 22.69
+(+2.4), OpticNerve4 19.84 → 19.85 (+0.0). Phase metrics improve on all three (e.g. WPC 0.796 → 0.841,
+0.813 → 0.849, 0.764 → 0.812).
+
+Phase coherence by amplitude decile: the gain grows with signal strength, from +0.003 in d1
+(noise) to +0.025 in d10 (brightest tissue). Phase is recovered where the signal supports it.
+
+**Interpretation:** a consistent, significant phase and complex-field gain on every sample. The
+amplitude gain in tissue is sample-dependent: large for Nail, ~0 for the retina. Realism gets worse:
+the unmeasured A-lines are darker than interpolation's (striping) and the background noise is
+smoothed (HistSim 0.85). This is the conditional-mean behaviour that the adversarial step targets.
+
+### `unet_full`: test set, original table (6 volumes, Fovea5 counted twice; superseded)
+
+Source: `runs/unet_full/eval_test_best_snr10/metrics.md` (best checkpoint, step 32.5k) and
+`eval_test_latest_snr10/` (step 100k). 192 B-scans (64 per sample). Values are means over
+B-scans with [95% bootstrap CI]. Phase metrics use pixels ≥ 10 dB above the noise floor (17.8% of pixels).
+
+| metric | interpolation | unet_full (best) | paired Δ [95% CI] | B-scans improved |
+|---|---:|---:|---:|---:|
+| PSNR dB-amplitude ↑ | 19.54 [19.49, 19.59] | **21.97** [21.89, 22.05] | +2.44 [+2.40, +2.47] dB | 100% |
+| SSIM dB-amplitude ↑ | 0.519 | **0.660** | +0.141 (+27%) | 100% |
+| complex NRMSE ↓ | 0.751 | **0.638** | −0.114 (−15%) | 100% |
+| \|ρ\| local ↑ | 0.719 | **0.764** | +0.045 | 100% |
+| WPC ↑ | 0.791 [0.784, 0.797] | **0.834** [0.828, 0.840] | +0.043 | 100% |
+| CCC ↑ | 0.745 [0.739, 0.751] | **0.794** [0.788, 0.799] | +0.049 | 100% |
+| PG-SSIM ↑ | 0.203 | **0.217** | +0.013 | 97.9% |
+| phase error, amplitude-weighted [rad] ↓ | 0.385 | **0.345** | −0.040 (−10%) | 99.5% |
+| inter-A-line Δφ error [rad] ↓ | 0.389 | **0.364** | −0.025 (−6%) | 96.9% |
+
+**Caveat, found from the before/after figures (2026-09-25): the whole-image PSNR/SSIM above
+are dominated by background noise.** Only 11–40% of pixels are tissue. The model smooths the
+background noise (dB spread 5.8 → ~3 dB), which whole-image PSNR rewards. Split by region, from
+`runs/unet_full/figures/before_after_*.npz`, one B-scan per sample:
+
+| PSNR dB-amp | whole image | tissue | background |
+|---|---|---|---|
+| Fovea5 | 19.36 → 21.67 | 20.26 → 20.70 | 19.24 → 21.85 |
+| OpticNerve4 | 19.22 → 21.52 | 19.95 → 19.53 | 19.13 → 21.84 |
+| Nail | 19.85 → 22.32 | 20.06 → 22.47 | 19.72 → 22.22 |
+
+So for retina the amplitude gain in tissue is ~0 dB; Nail gains in tissue too. **Do not quote
+the whole-image PSNR/SSIM as an amplitude improvement.** The phase metrics are computed in
+tissue and are unaffected.
+
+**Striping artifact:** in tissue, the model's unmeasured A-lines are 5–6 dB too dark (power
+ratio unmeasured/measured 0.32–0.57, vs ground truth ≈ 1.0 and interpolation 0.74–0.95). This is
+conditional-mean shrinkage: where the missing A-line is only partly predictable, the MSE-optimal
+estimate has a smaller magnitude. It is visible as vertical striping in the zoomed amplitude.
+Interpolation shows the same effect more weakly (−3.6 to −3.9 dB). This is the main motivation
+for the adversarial step.
+
+`eval.py` now reports tissue-only PSNR/SSIM (`psnr_db_tissue`, `ssim_db_tissue`), the dB bias on
+unmeasured A-lines (`unmeasured_db_bias`) and their power ratio (`unmeasured_power_ratio`, plus
+`_gt`). `unet_full` should be re-evaluated to get them on the full test set.
+
+Per sample (best checkpoint), all three improve on every phase metric:
+
+| sample | PSNR interp → model | WPC interp → model | CCC interp → model | Δφ err interp → model |
+|---|---|---|---|---|
+| Fovea5 | 19.32 → 21.65 | 0.796 → 0.841 | 0.767 → 0.815 | 0.290 → 0.259 |
+| OpticNerve4 | 19.29 → 21.56 | 0.764 → 0.812 | 0.736 → 0.785 | 0.398 → 0.376 |
+| Nail (unseen tissue) | 20.00 → 22.71 | 0.813 → 0.849 | 0.732 → 0.782 | 0.477 → 0.457 |
+
+Best vs final checkpoint: step 100k has slightly better amplitude (PSNR 22.08, SSIM 0.664) and
+slightly worse phase (WPC 0.830, Δφ error 0.378). This is the amplitude–phase trade-off over
+training, and the best checkpoint (selected on validation |ρ| local) is the phase-favouring one.
+
+Lateral spectrum (`mps.png`): interpolation has excess energy near the band edge (aliased energy
+folded back) and none beyond it. The model matches the ground truth in-band (the fold is undone)
+and restores part of the out-of-band energy, but ends ~8 dB below the ground truth at the Nyquist
+edge (−16 vs −8 dB): the finest lateral scales are still under-recovered. An out-of-band recovery
+metric was added to `eval.py` after this evaluation, so re-evaluation reports it as a number.
+
+Mask effect: with the old fixed −30 dB mask the phase-error reduction was −8.1% (weighted) and
+−4.5% (Δφ); with the SNR mask it is −10.3% and −6.3%. The old mask understated the phase gains.
+
+Data consistency: no measurable effect. The model already reproduces the measured A-lines.
+
+### `unet_full`: validation, for reference
+
+Best at step 32.5k. Phase metrics overfit after ~35k steps while amplitude keeps improving.
+
+### Pending
+
+- [x] `cascade_full` training and evaluation (equivalent to unet_full; see above)
+- [x] `unet_magnitude`, `unet_complex` training and evaluation (round 2)
+- [ ] Re-run `unet_full` evaluation to get the out-of-band spectral recovery numbers (optional)
+- [x] Before/after figure for `unet_full`: `runs/unet_full/figures/` (revealed the caveat above)
+- [ ] Re-evaluate `unet_full` with the tissue and unmeasured-line metrics
+
+### Adversarial step (implemented 2026-09-25, smoke-tested locally)
+
+All runs fine-tune a trained model from its EMA weights for **20k steps** (lr 5e-5, same losses),
+so the comparison is "same network, same start, one change". Final (`latest`) checkpoints are
+evaluated for all fine-tunes, to avoid checkpoint-selection bias.
+
+| Run | Starts from | Change | Answers |
+|---|---|---|---|
+| `unet_ft` | unet_full | none (control) | is any gain just more training? |
+| `unet_gan` | unet_full | conditional PatchGAN on dB amplitude, hinge loss, weight 0.01 | does a speckle-realism discriminator help? |
+| `unet_power` | unet_full | power-match loss on unmeasured A-lines (0.1) | is it just brightness correction? |
+| `cascade_ft` | cascade_full | none (control) | as above, for the cascade |
+| `cascade_gan` | cascade_full | same discriminator | as above, for the cascade |
+
+- **Discriminator** (`src/dloct/models/discriminator.py`): 3-layer PatchGAN with spectral norm
+  (2.8M parameters). It is conditioned on the measurement and the measured-A-line mask. Input is
+  dB amplitude only, so phase stays under the physics-aware losses; a `logphasor` mode also exists.
+- **Hypotheses**, from the realism diagnostics of unet_full: GAN > ft on `hist_sim`,
+  `unmeasured_power_ratio` (→ ~1.0), `unmeasured_db_bias` (→ 0) and out-of-band spectral
+  recovery, with no phase metric degrading by more than 5%.
+- **Decision rule**, main metric tissue PSNR: `python -m dloct.compare --ref <ft eval> --cand <gan eval>`.
+- The adversarial weight 0.01 is a first guess. Refine after the cascade and the first GAN run.
+
+## Open questions
+
+- Are any differently named samples the same physical tissue (e.g. OpticNerve4 vs OpticNerveNew)?
+  The user confirmed the split as is.
+- Adversarial models: which metrics show the benefit? Discriminators usually improve realism
+  (speckle statistics, high-frequency spectrum) and can cost pixel-wise distortion (PSNR, WPC):
+  the perception–distortion trade-off, Blau & Michaeli 2018. Plan to report both kinds.

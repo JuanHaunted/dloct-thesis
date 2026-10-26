@@ -1,0 +1,7 @@
+# Control for the adversarial step: continue unet_full for the same 20k steps, no discriminator.
+# Any gain of unet_gan over this run cannot be "just more training".
+defaults: base.yaml
+name: unet_ft
+loss: {warmup_steps: 0}
+optim: {lr: 5.0e-5, warmup_steps: 500, steps: 20000}
+train: {init_from: runs/unet_full/best.pt, val_every: 2000, ckpt_every: 2000}

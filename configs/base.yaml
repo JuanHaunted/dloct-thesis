@@ -1,0 +1,49 @@
+# Shared defaults. Experiment configs set `defaults: base.yaml` and override what differs.
+name: base
+seed: 0
+out_dir: runs
+
+data:
+  root: data/prepared
+  sources: [phase]     # real acquisitions only; null = every source in meta.json
+  factor: 2            # lateral decimation K. Real tomograms are near Nyquist (K* ~ 1), so K=2
+                       # already aliases; K=4 is the harder follow-up (see meta.json diagnostics)
+  balance: sample      # draw each sample equally often (bscan: proportional to its B-scans)
+  patch: [256, 256]    # (Z, X) training crop
+  batch_size: 16       # per GPU (H100 NVL, 94 GB)
+  num_workers: 8
+  min_energy: 1.0e-3   # reject near-empty patches (mean |x|^2, normalized units)
+  val_per_volume: 8    # full B-scans per validation volume
+  snr_db: 10.0         # phase metrics only where |x| is >= 10 dB above the B-scan noise floor
+
+model:
+  type: single_shot
+  base: 64
+  mults: [1, 2, 4, 8]
+  depth: 2
+
+loss:
+  charbonnier: 1.0
+  magnitude: 0.0
+  log_magnitude: 0.1   # counters amplitude shrinkage on unmeasured A-lines (see losses.log_magnitude)
+  phase: 0.1
+  dphase: 0.1
+  fft: 0.01
+  warmup_steps: 5000   # ramp the phase terms in
+
+optim:
+  lr: 2.0e-4
+  weight_decay: 1.0e-4
+  warmup_steps: 1000
+  steps: 100000
+  grad_clip: 1.0
+  ema: 0.999
+
+train:
+  precision: auto     # auto | bf16 | fp16 | fp32  (auto: bf16 if supported, else fp16, e.g. V100)
+  compile: false
+  log_every: 50
+  val_every: 2500
+  ckpt_every: 2500
+  select_metric: rho_local   # checkpoint selection on validation (EMA weights)
+  select_mode: max
