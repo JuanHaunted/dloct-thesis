@@ -7,8 +7,10 @@ renders the figures from these files, locally, without the models.
 
     python scripts/dump_reconstructions.py [--data-root ~/dloct/prepared]
 
-The B-scan is the middle one of the first test volume of each sample (the same choice as
-``figure_before_after.py``). Models whose checkpoint is missing are skipped.
+By default the B-scan is the middle one of the first test volume of each sample (the same choice
+as ``figure_before_after.py``). ``--volume NAME --y INDEX`` reconstructs one specific test B-scan
+instead (e.g. ``--volume phase__NailB --y 165``), written to ``recon_<sample>_<volume>_y<INDEX>.npz``.
+Models whose checkpoint is missing are skipped.
 """
 
 import argparse
@@ -53,7 +55,11 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--data-root", default=None)
     p.add_argument("--out", default="runs/figures")
+    p.add_argument("--volume", default=None, help="prepared volume name, e.g. phase__NailB")
+    p.add_argument("--y", type=int, default=None, help="B-scan index within --volume")
     args = p.parse_args()
+    if (args.volume is None) != (args.y is None):
+        p.error("--volume and --y go together")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -72,14 +78,25 @@ def main():
     ds = EvalBScans(args.data_root or cfg0["data"]["root"], "test", per_volume=None, divisor=divisor,
                     sources=cfg0["data"].get("sources"))
 
-    first = {}
-    for i, (name, y) in enumerate(ds.items):
-        first.setdefault(ds.vols.volume(name)["group"].split("/", 1)[-1], []).append(i)
+    if args.volume is not None:
+        if (args.volume, args.y) not in ds.items:
+            raise SystemExit(f"{args.volume} y={args.y} is not a test B-scan; test volumes: "
+                             f"{sorted({n for n, _ in ds.items})}")
+        i = ds.items.index((args.volume, args.y))
+        sample = ds.vols.volume(args.volume)["group"].split("/", 1)[-1]
+        jobs = [(sample, i, f"recon_{sample}_{args.volume.split('__')[-1]}_y{args.y}.npz")]
+    else:
+        first = {}
+        for i, (name, y) in enumerate(ds.items):
+            first.setdefault(ds.vols.volume(name)["group"].split("/", 1)[-1], []).append(i)
+        jobs = []
+        for sample, idx in sorted(first.items()):
+            vol = ds.items[idx[0]][0]
+            idx = [i for i in idx if ds.items[i][0] == vol]
+            jobs.append((sample, idx[len(idx) // 2], f"recon_{sample}.npz"))
     dtype = amp_dtype(cfg0["train"].get("precision", "auto"))
-    for sample, idx in sorted(first.items()):
-        vol = ds.items[idx[0]][0]
-        idx = [i for i in idx if ds.items[i][0] == vol]
-        x, name, y = ds[idx[len(idx) // 2]]
+    for sample, i, fname in jobs:
+        x, name, y = ds[i]
         x = x.to(device)[None]
         x_meas = measure(x, K, 0)
         fields = {"Ground truth": x[0], "Interpolation": x_meas[0]}
@@ -88,10 +105,9 @@ def main():
                 with torch.autocast("cuda", dtype=dtype or torch.float32, enabled=dtype is not None and x.is_cuda):
                     fields[label] = model(x_meas, K, 0).to(torch.complex64)[0]
         labels = list(fields)
-        np.savez_compressed(out / f"recon_{sample}.npz", labels=np.array(labels), sample=sample, volume=name, y=y,
+        np.savez_compressed(out / fname, labels=np.array(labels), sample=sample, volume=name, y=y,
                             factor=K, **{f"f{i}": fields[lab].cpu().numpy() for i, lab in enumerate(labels)})
-        print(f"{sample}: {name} y={y}: {', '.join(labels)}")
-    print(f"wrote {out}/recon_*.npz")
+        print(f"{sample}: {name} y={y}: {', '.join(labels)} -> {out / fname}")
 
 
 if __name__ == "__main__":

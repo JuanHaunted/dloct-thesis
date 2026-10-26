@@ -271,6 +271,7 @@ def fig_qualitative(npz_path: Path, out: Path, snr_db: float = 10.0):
     labels = [str(s) for s in d["labels"]]
     fields = {lab: d[f"f{i}"] for i, lab in enumerate(labels)}
     sample = str(d["sample"])
+    tag = npz_path.stem.removeprefix("recon_")   # e.g. "Nail" or "Nail_NailB_y165"
     gt = fields["Ground truth"]
     boxes, size = _zoom_boxes(gt)
     vmin, vmax = -45, 0
@@ -305,7 +306,7 @@ def fig_qualitative(npz_path: Path, out: Path, snr_db: float = 10.0):
                  f"(dB relative to the volume's 99.9th-percentile amplitude)",
                  x=0.01, ha="left", fontsize=9, color=INK_2)
     fig.tight_layout(rect=(0, 0, 1, 0.98))
-    save(fig, out, f"qual_amplitude_{sample}")
+    save(fig, out, f"qual_amplitude_{tag}")
 
     # Phase continuity: rows = axial / lateral phase difference; columns = methods (tissue only).
     amp = np.abs(gt)
@@ -333,7 +334,7 @@ def fig_qualitative(npz_path: Path, out: Path, snr_db: float = 10.0):
     cb.set_label("phase difference [rad]", color=INK_2)
     fig.suptitle(f"{sample}: phase continuity in zoom 1 (pixels ≥ {snr_db:g} dB above the noise floor; grey = masked)",
                  x=0.01, ha="left", fontsize=9, color=INK_2)
-    save(fig, out, f"qual_phase_{sample}")
+    save(fig, out, f"qual_phase_{tag}")
 
 
 def main():
