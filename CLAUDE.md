@@ -22,4 +22,4 @@ Some references are internal and unpublished. They are listed in the Claude auto
 
 - Real tomograms only (`data.sources: [phase]`), K=2 lateral decimation, split by sample (`configs/split.yaml`).
 - Phase metrics are computed only where the signal is ≥ 10 dB above the B-scan noise floor.
-- Commits: `Type(scope): Summary.`, with the Claude co-author trailer.
+- Commits: `Type(scope): Summary.`, authored by the user, with no co-author trailer or AI attribution lines (attribution is given in the thesis itself).
