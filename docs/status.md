@@ -136,6 +136,12 @@ Findings:
 6. Extra training alone (`*_ft` vs parents) changes little: tissue PSNR ±0.1–0.2 dB, phase
    essentially unchanged.
 
+### Seed replicates (not used)
+
+`unet_ft_s1`, `unet_power_s1` and `unet_gan_power_lo_s1` (seed 1) were trained on Apolo but not
+evaluated, and are not part of the results. Every reported configuration therefore uses a single
+training seed; state this as a limitation.
+
 ### Figures (for the thesis)
 
 `python scripts/make_figures.py` writes PNG + PDF to `runs/figures/`. Encoding is fixed across all
