@@ -1,5 +1,5 @@
 """
-Lateral sub-Nyquist sampling operator for complex OCT B-scans (README operator C).
+Lateral sub-Nyquist sampling operator for complex OCT B-scans (operator C in docs/sampling_theory.md).
 
 All functions act on complex tensors whose **last axis is the lateral (fast) axis** X.
 A measurement keeps every K-th A-line starting at ``offset`` (no anti-alias filter, exactly

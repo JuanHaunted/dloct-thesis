@@ -134,7 +134,7 @@ def main():
         summary=summary, ci95_bscan=ci, ci95_volume=ci_vol, tests_vs_interpolation=tests,
         per_sample=per_sample, mps_halfwidth_1pct=halfwidth, spectral=spectral, per_bscan=records), indent=2))
 
-    md = [f"# {cfg['name']} — {args.split} (K={K}, {len(ds)} B-scans, step {ck['step']}, {args.ckpt}, "
+    md = [f"# {cfg['name']}: {args.split} (K={K}, {len(ds)} B-scans, step {ck['step']}, {args.ckpt}, "
           f"phase metrics at SNR >= {args.snr_db:g} dB, {summary['interpolation']['mask_fraction']:.0%} of pixels)",
           "", f"Mean over B-scans [95% bootstrap CI over volumes, n={len(set(r['volume'] for r in records))}]. "
           "Volume-level CIs are wide by design: B-scans of one volume are correlated.", "",
@@ -167,7 +167,7 @@ def main():
 
     mps_figure(spectra, out / "mps.png", K)
     for i, (name, gt, preds) in enumerate(examples):
-        comparison_figure(gt, preds, out / f"example_{i}.png", args.snr_db, title=f"{cfg['name']} — {name}")
+        comparison_figure(gt, preds, out / f"example_{i}.png", args.snr_db, title=f"{cfg['name']}: {name}")
     print("\n".join(md))
     print(f"\nwrote {out}")
 

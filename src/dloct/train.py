@@ -168,7 +168,7 @@ def main():
         log(dict(step=step, kind="val", metrics=summary, per_source=per_source))
         name, gt, preds = examples[0]
         comparison_figure(gt, preds, run_dir / "previews" / f"step{step:07d}.png",
-                          dcfg.get("snr_db", 10.0), title=f"{cfg['name']} step {step} — {name}")
+                          dcfg.get("snr_db", 10.0), title=f"{cfg['name']} step {step}: {name}")
         method = "model+dc" if "model+dc" in summary else "model"
         score = summary[method][tcfg["select_metric"]]
         better = best is None or (score > best if tcfg["select_mode"] == "max" else score < best)

@@ -11,7 +11,7 @@ Two Claude sessions work in this repo in parallel:
 
 - **`docs/status.md`**: current decisions, results, pending runs and open questions. The programming agent updates it after every milestone. The writing agent reads it before drafting and never states a result that is not in it or in a results file.
 - **Results files:** `runs/<name>/eval_*/metrics.md` and `metrics.json` (test set, 95% bootstrap CIs), `runs/<name>/log.jsonl` (training and validation curves), `runs/<name>/previews/`.
-- **Background:** `README.md` (sampling theory, operators), `docs/literature_review.md` (references; entries marked [?] still need verification), `docs/data_findings.md` (data diagnostics), `docs/apolo.md` (cluster).
+- **Background:** `docs/sampling_theory.md` (sampling theory, operators), `docs/literature_review.md` (references; entries marked [?] still need verification), `docs/data_findings.md` (data diagnostics), `docs/apolo.md` (cluster).
 - The writing agent asks the programming agent (or the user) when a number is missing or unclear, and never invents or extrapolates results.
 
 ## Confidentiality
